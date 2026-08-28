@@ -1,0 +1,47 @@
+# временные файлы и хранилище
+temp_storage/uploads/*
+!temp_storage/uploads/.gitkeep
+temp_storage/processed/*
+!temp_storage/processed/.gitkeep
+temp_storage/exports/*
+!temp_storage/exports/.gitkeep
+
+# журналы и локальные конфигурации
+*.log
+data/*.log
+data/*.json
+!data/.gitkeep
+debug_*.txt
+
+# аудио и медиа файлы
+*.mp3
+*.wav
+*.m4a
+*.mp4
+*.mkv
+*.flac
+*.aac
+*.ogg
+*.opus
+*.docx
+*.pdf
+*.srt
+*.lrc
+
+# модели весов
+models/llm/*.gguf
+models/whisper/*
+!models/llm/.gitkeep
+!models/whisper/.gitkeep
+
+# кэш python и среды разработки
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+env/
+.idea/
+.vscode/
+.DS_Store

@@ -1,0 +1,53 @@
+:root {
+  --neon-green: #00ffaa;
+  --electric-cyan: #00e5ff;
+  --deep-teal: #00382e;
+  --dark-bg: #030a08;
+  --panel-bg: rgba(0, 24, 18, 0.72);
+  --panel-border: rgba(0, 255, 170, 0.35);
+  --border-glow: rgba(0, 255, 170, 0.5);
+  --text-main: #d1fae5;
+  --text-muted: #6ee7b7;
+  --text-sub: #4b6358;
+  --card-bg: rgba(0, 32, 24, 0.6);
+  --input-bg: rgba(0, 18, 14, 0.85);
+  --accent-glow: rgba(0, 255, 170, 0.25);
+  --badge-bg: rgba(0, 255, 170, 0.12);
+  --button-hover: #38ffc0;
+}
+
+[data-theme="light"] {
+  --neon-green: #008f65;
+  --electric-cyan: #007799;
+  --deep-teal: #e2f5ee;
+  --dark-bg: #f0f7f4;
+  --panel-bg: rgba(255, 255, 255, 0.88);
+  --panel-border: rgba(0, 143, 101, 0.3);
+  --border-glow: rgba(0, 143, 101, 0.4);
+  --text-main: #0c2e22;
+  --text-muted: #1e5a45;
+  --text-sub: #6c8a7e;
+  --card-bg: rgba(240, 250, 245, 0.9);
+  --input-bg: rgba(255, 255, 255, 0.95);
+  --accent-glow: rgba(0, 143, 101, 0.15);
+  --badge-bg: rgba(0, 143, 101, 0.1);
+  --button-hover: #007352;
+}
+
+[data-theme="dark"] {
+  --neon-green: #00ffaa;
+  --electric-cyan: #00e5ff;
+  --deep-teal: #00382e;
+  --dark-bg: #030a08;
+  --panel-bg: rgba(0, 24, 18, 0.75);
+  --panel-border: rgba(0, 255, 170, 0.35);
+  --border-glow: rgba(0, 255, 170, 0.5);
+  --text-main: #d1fae5;
+  --text-muted: #6ee7b7;
+  --text-sub: #4b6358;
+  --card-bg: rgba(0, 32, 24, 0.6);
+  --input-bg: rgba(0, 18, 14, 0.85);
+  --accent-glow: rgba(0, 255, 170, 0.25);
+  --badge-bg: rgba(0, 255, 170, 0.12);
+  --button-hover: #38ffc0;
+}

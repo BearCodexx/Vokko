@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vokko // Deep Speech & Music Transcription</title>
+  
+  <!-- подключение шрифтов -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  
+  <!-- стили оформления интерфейса -->
+  <link rel="stylesheet" href="css/themes.css">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/hud.css">
+</head>
+<body>
+
+  <!-- фоновое свечение и глубина -->
+  <div class="ambient-glow"></div>
+
+  <!-- сетка на заднем плане -->
+  <div class="grid-background"></div>
+
+  <!-- голографическая потолочная сетка в перспективе -->
+  <div class="ceiling-grid"></div>
+
+  <!-- вращающийся 3D голографический куб -->
+  <div class="holo-cube-container">
+    <div class="holo-cube">
+      <div class="cube-face face-front"></div>
+      <div class="cube-face face-back"></div>
+      <div class="cube-face face-right"></div>
+      <div class="cube-face face-left"></div>
+      <div class="cube-face face-top"></div>
+      <div class="cube-face face-bottom"></div>
+    </div>
+  </div>
+
+  <!-- потоки данных матрицы -->
+  <div class="data-streams">
+    <div class="data-column">01011<br>STREAM<br>VOKKO<br>0xFF4</div>
+    <div class="data-column">SYNC<br>DEMUCS<br>10100<br>0x98A</div>
+    <div class="data-column">WHISPER<br>V3_CORE<br>00110<br>0x22C</div>
+  </div>
+
+  <!-- световой сканирующий луч -->
+  <div class="radar-sweep"></div>
+
+  <!-- неоновые круговые индикаторы -->
+  <div class="cyber-circle circle-1"></div>
+  <div class="cyber-circle circle-2"></div>
+
+  <!-- верхняя навигационная панель -->
+  <header class="top-nav">
+    <a href="#" class="logo">
+      <svg class="sci-icon" viewBox="0 0 24 24" style="stroke:var(--neon-green);"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+      VOKKO<span>//</span>AI
+    </a>
+    <div class="nav-actions">
+      <div class="theme-switch">
+        <button class="theme-btn" data-theme="dark">ТЕМНАЯ</button>
+        <button class="theme-btn" data-theme="light">СВЕТЛАЯ</button>
+        <button class="theme-btn active" data-theme="system">СИСТЕМА</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- векторные декоративные контуры -->
+  <svg class="hud-lines" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+    <line x1="0" y1="40" x2="100%" y2="40" stroke="var(--neon-green)" stroke-width="1" opacity="0.2"/>
+    <line x1="0" y1="100%" x2="100%" y2="100%" stroke="var(--neon-green)" stroke-width="1" opacity="0.2"/>
+    <line x1="80" y1="0" x2="80" y2="100%" stroke="var(--neon-green)" stroke-width="1" opacity="0.15"/>
+    <line x1="calc(100% - 80px)" y1="0" x2="calc(100% - 80px)" y2="100%" stroke="var(--neon-green)" stroke-width="1" opacity="0.15"/>
+    
+    <path d="M 40 120 L 40 40 L 120 40" stroke="var(--neon-green)" stroke-width="2" fill="none" opacity="0.6"/>
+    <path d="M calc(100% - 40px) 120 L calc(100% - 40px) 40 L calc(100% - 120px) 40" stroke="var(--neon-green)" stroke-width="2" fill="none" opacity="0.6"/>
+    <path d="M 40 calc(100% - 120px) L 40 calc(100% - 40px) L 120 calc(100% - 40px)" stroke="var(--neon-green)" stroke-width="2" fill="none" opacity="0.6"/>
+    <path d="M calc(100% - 40px) calc(100% - 120px) L calc(100% - 40px) calc(100% - 40px) L calc(100% - 120px) calc(100% - 40px)" stroke="var(--neon-green)" stroke-width="2" fill="none" opacity="0.6"/>
+    
+    <path d="M 120 300 L 250 300 L 350 420 L 450 420" stroke="var(--neon-green)" stroke-width="2" fill="none" opacity="0.35"/>
+    <circle cx="450" cy="420" r="4" fill="var(--neon-green)" opacity="0.6"/>
+
+    <path d="M 1400 450 L 1200 450 L 1080 570 L 980 570" stroke="var(--neon-green)" stroke-width="2" fill="none" opacity="0.35"/>
+    <circle cx="980" cy="570" r="4" fill="var(--neon-green)" opacity="0.6"/>
+  </svg>
+
+  <!-- холст анимации звуковых волн -->
+  <canvas id="wave-canvas"></canvas>
+
+  <!-- плавающие панели телеметрии -->
+  <div class="hud-panel panel-left-top">
+    <div class="hud-title"><span>NODE.01</span><span>[0x88F]</span></div>
+    <div class="hud-content">CORE: WHISPER-V3<br>STATUS: READY</div>
+  </div>
+
+  <div class="hud-panel panel-left-mid">
+    <div class="hud-title"><span>ISOLATION</span><span>DEMUCS</span></div>
+    <div class="hud-content">VOCAL SPLIT: ACTIVE<br>NOISE SUPPRESSION: ON</div>
+    <div class="hud-metric">99.8% ACC</div>
+  </div>
+
+  <div class="hud-panel panel-right-top">
+    <div class="hud-title"><span>WAVEFORM</span><span>DSP</span></div>
+    <div class="hud-content">RATE: 44.1 kHz<br>FOURIER TRANSFORM: SYNC</div>
+    <div class="hud-metric">0.02ms LAT</div>
+  </div>
+
+  <div class="hud-panel panel-right-bottom">
+    <div class="hud-title"><span>DIARIZATION</span><span>ENGINE</span></div>
+    <div class="hud-content">CLUSTERING: SPECTRAL<br>MULTI-SPEAKER: READY</div>
+  </div>
+
+  <!-- основное содержимое страницы -->
+  <main class="main-container">
+    
+    <!-- онбординг, выбор режима -->
+    <section class="onboarding-section">
+      <div class="hero-tag">
+        <svg class="sci-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span>WHISPER & DEMUCS NEURAL ENGINE</span>
+      </div>
+      <h1 class="hero-title">Vokko Intelligence</h1>
+      <p class="hero-subtitle">
+        Нейросетевая транскрибация видео, аудио и музыкальных дорожек с разделением спикеров и интеллектуальным анализом структуры песен
+      </p>
+
+      <!-- две карточки выбора режима -->
+      <div class="mode-selector-grid">
+        
+        <!-- карточка видео и звукозаписей -->
+        <div class="mode-card active" id="card-mode-general">
+          <div class="card-badge">
+            <span>MODE_01 // GENERAL</span>
+            <svg class="sci-icon" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
+          </div>
+          <h2 class="card-title">Видео / Аудио</h2>
+          <p class="card-desc">
+            Транскрибация записей, интервью, подкастов и видео с YouTube, RuTube, VK Видео, Дзен с распознаванием спикеров и таймкодами.
+          </p>
+          <ul class="card-features">
+            <li><svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Распознавание спикеров (Speaker Diarization)</li>
+            <li><svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Переименование, слияние и удаление спикеров</li>
+            <li><svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Экспорт в TXT, DOCX, PDF, SRT, JSON</li>
+          </ul>
+        </div>
+
+        <!-- карточка музыкальных треков -->
+        <div class="mode-card" id="card-mode-music">
+          <div class="card-badge">
+            <span>MODE_02 // MUSIC</span>
+            <svg class="sci-icon" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+          </div>
+          <h2 class="card-title">Музыкальный трек</h2>
+          <p class="card-desc">
+            Выделение вокала через Demucs, очистка от инструментов и интеллектуальная разметка песни на куплеты, припевы, бриджи и речитатив.
+          </p>
+          <ul class="card-features">
+            <li><svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Изоляция чистого вокала нейросетью Demucs</li>
+            <li><svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Интеллектуальный анализ куплетов и припевов</li>
+            <li><svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg> Экспорт в TXT, DOCX, PDF, LRC, JSON</li>
+          </ul>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- рабочая область видео и звука -->
+    <div id="workspace-general" class="workspace-panel">
+      <div class="workspace-header">
+        <div class="workspace-title">
+          <svg class="sci-icon" style="stroke:var(--neon-green);" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          Транскрибация видео и аудио
+        </div>
+      </div>
+
+      <div id="general-input-form">
+        <!-- зона загрузки файла -->
+        <div class="drop-zone" id="general-drop-zone">
+          <input type="file" id="general-file-input" class="file-input" accept="audio/*,video/*">
+          <svg class="drop-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+          <div class="drop-title" id="general-file-name">Перетащите медиафайл или нажмите для выбора</div>
+          <div class="drop-subtitle">Поддерживаются MP3, WAV, MP4, MKV, M4A, FLAC, OGG, WEBM</div>
+        </div>
+
+        <div class="divider-bar"><span>ИЛИ ССЫЛКА НА ВИДЕОХОСТИНГ</span></div>
+
+        <!-- ввод ссылки на видеохостинг -->
+        <div class="url-input-container">
+          <input type="text" id="general-url-input" class="sci-input" placeholder="Вставьте ссылку: YouTube, RuTube, VK Видео, Дзен...">
+          <button class="btn-primary" id="btn-start-general">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            ТРАНСКРИБИРОВАТЬ
+          </button>
+        </div>
+
+        <!-- панель параметров и моделей нейросетей -->
+        <div class="settings-compact-panel">
+          <div class="settings-row">
+            <!-- селектор модели ASR -->
+            <div class="model-select-group">
+              <label class="model-select-label">
+                <svg class="sci-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                Модель Whisper:
+              </label>
+              <div class="select-wrapper">
+                <select id="general-asr-select" class="sci-select"></select>
+              </div>
+            </div>
+
+            <!-- селектор модели LLM -->
+            <div class="model-select-group">
+              <label class="model-select-label">
+                <svg class="sci-icon" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                Нейрокоррекция (LLM):
+              </label>
+              <div class="select-wrapper">
+                <select id="general-llm-select" class="sci-select"></select>
+              </div>
+            </div>
+
+            <!-- кнопка менеджера моделей -->
+            <button type="button" class="btn-secondary btn-models-manager" title="Каталог и докачка моделей">
+              <svg class="sci-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              МОДЕЛИ
+            </button>
+          </div>
+
+          <!-- компактные тумблеры, расположенные рядом с заголовком -->
+          <div class="toggles-compact-row">
+            <label class="compact-toggle">
+              <input type="checkbox" id="toggle-timecodes" checked>
+              <span class="toggle-switch"></span>
+              <span class="compact-toggle-text">Таймкоды</span>
+            </label>
+            <label class="compact-toggle">
+              <input type="checkbox" id="toggle-diarization" checked>
+              <span class="toggle-switch"></span>
+              <span class="compact-toggle-text">Распознавание спикеров</span>
+            </label>
+          </div>
+
+          <!-- блок расширенных параметров LLM (OpenRouter / Ollama) -->
+          <div id="general-llm-advanced-panel" class="llm-advanced-row" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid rgba(0,229,255,0.15);">
+            <!-- блок OpenRouter -->
+            <div id="general-openrouter-box" class="llm-config-subgroup" style="display:none; margin-bottom:8px;">
+              <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:200px;">
+                  <label class="model-select-label">OpenRouter API Key:</label>
+                  <input type="password" id="general-openrouter-key" class="sci-input" placeholder="sk-or-v1-..." style="padding:6px 10px; font-size:12px;">
+                </div>
+                <div style="flex:1; min-width:200px;">
+                  <label class="model-select-label">Модель OpenRouter:</label>
+                  <input type="text" id="general-openrouter-model" class="sci-input" placeholder="google/gemma-2-9b-it" list="openrouter-models-list" style="padding:6px 10px; font-size:12px;">
+                </div>
+              </div>
+            </div>
+
+            <!-- блок Ollama выбор модели -->
+            <div id="general-ollama-box" class="llm-config-subgroup" style="display:none; margin-bottom:8px;">
+              <label class="model-select-label">Модель в Ollama:</label>
+              <div class="select-wrapper">
+                <select id="general-ollama-model-select" class="sci-select"></select>
+              </div>
+            </div>
+
+            <!-- блок слоев температуры -->
+            <div id="general-layers-box" class="llm-config-subgroup" style="display:none; margin-top:8px;">
+              <label class="model-select-label" title="Число температурных проходов для синтеза идеального варианта">
+                Слои температурного синтеза (1–5):
+                <span id="general-layers-badge" style="color:var(--electric-cyan); font-weight:bold; margin-left:6px;">1 (Оптимальный, 1 проход)</span>
+              </label>
+              <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+                <input type="range" id="general-llm-layers" min="1" max="5" value="1" step="1" style="flex:1; accent-color:var(--electric-cyan);">
+                <span style="font-size:11px; color:var(--text-muted); font-family:'Share Tech Mono';">1 = стабильный, 2–5 = синтез</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- панель ошибки -->
+        <div id="general-error-box" class="hud-error-banner" style="display:none;">
+          <div class="error-text">
+            <svg class="sci-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <span id="general-error-message">Ошибка обработки</span>
+          </div>
+          <button class="btn-danger" id="general-error-dismiss">ЗАКРЫТЬ</button>
+        </div>
+      </div>
+
+      <!-- индикатор выполнения с этапами -->
+      <div id="general-processing-hud" class="processing-hud" style="display:none;">
+        <div class="loader-circuit"></div>
+        <div class="process-step-title">ОБРАБОТКА НЕЙРОСЕТЬЮ</div>
+        <div class="process-step-desc">Выполняются этапы транскрибации аудиосигнала</div>
+        
+        <div class="process-steps-list">
+          <div class="step-item" id="gen-step-1">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>1. Загрузка и проверка формата аудио</span>
+          </div>
+          <div class="step-item" id="gen-step-2">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>2. Распознавание речи моделью Whisper</span>
+          </div>
+          <div class="step-item" id="gen-step-3">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>3. Диаризация спикеров и привязка таймкодов</span>
+          </div>
+        </div>
+
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="general-progress-fill"></div>
+        </div>
+      </div>
+
+      <!-- панель результатов -->
+      <div id="general-result-panel" class="result-section" style="display:none;">
+        
+        <!-- панель управления спикерами -->
+        <div id="general-speakers-toolbar" class="speakers-toolbar">
+          <div class="speakers-heading">
+            <svg class="sci-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            Управление спикерами (нажмите для переименования, слияния или удаления):
+          </div>
+          <div id="speakers-chips-container" class="speakers-chips-list"></div>
+        </div>
+
+        <div class="result-toolbar">
+          <div class="toolbar-left">
+            <div class="status-chip">
+              <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span>РАСШИФРОВКА ГОТОВА</span>
+            </div>
+            <span style="font-family:'Share Tech Mono';font-size:12px;color:var(--text-muted);">Текст доступен для редактирования кликом</span>
+          </div>
+
+          <div class="toolbar-right">
+            <!-- меню экспорта -->
+            <div class="export-dropdown">
+              <button class="btn-primary export-trigger-btn">
+                <svg class="sci-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                СКАЧАТЬ РЕЗУЛЬТАТ
+              </button>
+              <div class="export-menu">
+                <button class="export-menu-item" data-format="txt" data-mode="general">TXT (Текст)</button>
+                <button class="export-menu-item" data-format="docx" data-mode="general">DOCX (Документ Word)</button>
+                <button class="export-menu-item" data-format="pdf" data-mode="general">PDF (Документ PDF)</button>
+                <button class="export-menu-item" data-format="srt" data-mode="general">SRT (Субтитры)</button>
+                <button class="export-menu-item" data-format="json" data-mode="general">JSON (Данные)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- блок транскрипции -->
+        <div id="general-transcript-box" class="transcript-box"></div>
+      </div>
+    </div>
+
+    <!-- рабочая область музыки -->
+    <div id="workspace-music" class="workspace-panel" style="display:none;">
+      <div class="workspace-header">
+        <div class="workspace-title">
+          <svg class="sci-icon" style="stroke:var(--electric-cyan);" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+          Транскрибация музыкального трека
+        </div>
+      </div>
+
+      <div id="music-input-form">
+        <!-- зона загрузки аудиофайла -->
+        <div class="drop-zone" id="music-drop-zone">
+          <input type="file" id="music-file-input" class="file-input" accept="audio/*">
+          <svg class="drop-icon" style="stroke:var(--electric-cyan);" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+          <div class="drop-title" id="music-file-name">Перетащите аудиофайл песни (MP3, WAV, FLAC, M4A, AAC, OGG)</div>
+          <div class="drop-subtitle">Нажмите или перетащите файл для мгновенной обработки полного трека</div>
+        </div>
+
+        <!-- панель параметров и моделей для музыки -->
+        <div class="settings-compact-panel">
+          <div class="settings-row">
+            <!-- селектор модели ASR музыки -->
+            <div class="model-select-group">
+              <label class="model-select-label">
+                <svg class="sci-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                Модель Whisper:
+              </label>
+              <div class="select-wrapper">
+                <select id="music-asr-select" class="sci-select"></select>
+              </div>
+            </div>
+
+            <!-- селектор модели LLM музыки -->
+            <div class="model-select-group">
+              <label class="model-select-label">
+                <svg class="sci-icon" viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                Нейрокоррекция (LLM):
+              </label>
+              <div class="select-wrapper">
+                <select id="music-llm-select" class="sci-select"></select>
+              </div>
+            </div>
+
+            <button type="button" class="btn-secondary btn-models-manager" title="Каталог и докачка моделей">
+              <svg class="sci-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              МОДЕЛИ
+            </button>
+          </div>
+
+          <!-- блок расширенных параметров LLM (OpenRouter / Ollama / Слои) для музыки -->
+          <div id="music-llm-advanced-panel" class="llm-advanced-row" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid rgba(0,229,255,0.15);">
+            <!-- блок OpenRouter -->
+            <div id="music-openrouter-box" class="llm-config-subgroup" style="display:none; margin-bottom:8px;">
+              <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                <div style="flex:1; min-width:200px;">
+                  <label class="model-select-label">OpenRouter API Key:</label>
+                  <input type="password" id="music-openrouter-key" class="sci-input" placeholder="sk-or-v1-..." style="padding:6px 10px; font-size:12px;">
+                </div>
+                <div style="flex:1; min-width:200px;">
+                  <label class="model-select-label">Модель OpenRouter:</label>
+                  <input type="text" id="music-openrouter-model" class="sci-input" placeholder="google/gemma-2-9b-it" list="openrouter-models-list" style="padding:6px 10px; font-size:12px;">
+                </div>
+              </div>
+            </div>
+
+            <!-- блок Ollama выбор модели -->
+            <div id="music-ollama-box" class="llm-config-subgroup" style="display:none; margin-bottom:8px;">
+              <label class="model-select-label">Модель в Ollama:</label>
+              <div class="select-wrapper">
+                <select id="music-ollama-model-select" class="sci-select"></select>
+              </div>
+            </div>
+
+            <!-- блок слоев температуры -->
+            <div id="music-layers-box" class="llm-config-subgroup" style="display:none; margin-top:8px;">
+              <label class="model-select-label" title="Число температурных проходов для синтеза идеального варианта">
+                Слои температурного синтеза (1–5):
+                <span id="music-layers-badge" style="color:var(--electric-cyan); font-weight:bold; margin-left:6px;">1 (Оптимальный, 1 проход)</span>
+              </label>
+              <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+                <input type="range" id="music-llm-layers" min="1" max="5" value="1" step="1" style="flex:1; accent-color:var(--electric-cyan);">
+                <span style="font-size:11px; color:var(--text-muted); font-family:'Share Tech Mono';">1 = стабильный, 2–5 = синтез</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <datalist id="openrouter-models-list">
+          <option value="google/gemma-2-9b-it">Google Gemma 2 9B</option>
+          <option value="meta-llama/llama-3.1-8b-instruct">Meta Llama 3.1 8B</option>
+          <option value="meta-llama/llama-3.1-70b-instruct">Meta Llama 3.1 70B</option>
+          <option value="qwen/qwen-2.5-72b-instruct">Qwen 2.5 72B</option>
+          <option value="qwen/qwen-2.5-14b-instruct">Qwen 2.5 14B</option>
+          <option value="mistralai/mistral-nemo">Mistral NeMo 12B</option>
+          <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+          <option value="openai/gpt-4o-mini">GPT-4o mini</option>
+        </datalist>
+
+        <div style="text-align:center; margin-top:20px;">
+          <button class="btn-primary" id="btn-start-music" style="width:100%; max-width:320px;">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            ИЗВЛЕЧЬ ТЕКСТ ПЕСНИ
+          </button>
+        </div>
+
+        <!-- панель ошибки музыки -->
+        <div id="music-error-box" class="hud-error-banner" style="display:none;">
+          <div class="error-text">
+            <svg class="sci-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <span id="music-error-message">Ошибка обработки</span>
+          </div>
+          <button class="btn-danger" id="music-error-dismiss">ЗАКРЫТЬ</button>
+        </div>
+      </div>
+
+      <!-- индикатор выполнения разделения вокала, транскрибация -->
+      <div id="music-processing-hud" class="processing-hud" style="display:none;">
+        <div class="loader-circuit" style="border-top-color:var(--electric-cyan);"></div>
+        <div class="process-step-title">ПАЙПЛАЙН ОБРАБОТКИ МУЗЫКИ</div>
+        <div class="process-step-desc">Выделение вокала и формирование структуры песни</div>
+
+        <div class="process-steps-list">
+          <div class="step-item" id="mus-step-1">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>1. Загрузка трека в исходном качестве</span>
+          </div>
+          <div class="step-item" id="mus-step-2">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>2. Demucs изоляция чистого вокала от инструментала</span>
+          </div>
+          <div class="step-item" id="mus-step-3">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>3. Распознавание текста песни через Whisper</span>
+          </div>
+          <div class="step-item" id="mus-step-4">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>4. Интеллектуальный анализ куплетов и припевов</span>
+          </div>
+        </div>
+
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="music-progress-fill" style="background:var(--electric-cyan);box-shadow:0 0 10px var(--electric-cyan);"></div>
+        </div>
+      </div>
+
+      <!-- панель результатов музыки -->
+      <div id="music-result-panel" class="result-section" style="display:none;">
+        <div class="result-toolbar">
+          <div class="toolbar-left">
+            <div class="status-chip" style="color:var(--electric-cyan);border-color:rgba(0,229,255,0.4);background:rgba(0,229,255,0.1);">
+              <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <span>СТРУКТУРА ПЕСНИ СФОРМИРОВАНА</span>
+            </div>
+            <span style="font-family:'Share Tech Mono';font-size:12px;color:var(--text-muted);">Куплеты, припевы и бриджи определены адаптивно</span>
+          </div>
+
+          <div class="toolbar-right">
+            <!-- меню экспорта музыки -->
+            <div class="export-dropdown">
+              <button class="btn-primary export-trigger-btn">
+                <svg class="sci-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                СКАЧАТЬ ТЕКСТ ПЕСНИ
+              </button>
+              <div class="export-menu">
+                <button class="export-menu-item" data-format="txt" data-mode="music">TXT (Текст песни)</button>
+                <button class="export-menu-item" data-format="docx" data-mode="music">DOCX (Документ Word)</button>
+                <button class="export-menu-item" data-format="pdf" data-mode="music">PDF (Документ PDF)</button>
+                <button class="export-menu-item" data-format="lrc" data-mode="music">LRC (Караоке с таймкодами)</button>
+                <button class="export-menu-item" data-format="json" data-mode="music">JSON (Структура)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- подсказка о ручной доработке текста -->
+        <div class="hud-helper-tip" style="margin-bottom:15px; padding:10px 14px; background:rgba(0,229,255,0.05); border:1px solid rgba(0,229,255,0.2); border-radius:4px; font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:10px;">
+          <svg class="sci-icon" style="stroke:var(--electric-cyan); flex-shrink:0; width:16px; height:16px;" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+          <span>Локальные компактные языковые модели могут допускать неточности в сложных треках. Вы можете отредактировать текст вручную прямо в блоках ниже.</span>
+        </div>
+
+        <!-- контейнер со строфами песни -->
+        <div id="music-lyrics-container" class="lyric-blocks-container"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- диалоговое окно для переименования, слияния -->
+  <div id="vokko-modal" class="modal-overlay">
+    <div class="modal-box">
+      <div id="modal-title" class="modal-title">Действие над спикером</div>
+      <div id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel-btn" class="btn-secondary">ОТМЕНА</button>
+        <button id="modal-confirm-btn" class="btn-primary">ПРИМЕНИТЬ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- модальное окно каталога и докачки моделей -->
+  <div id="models-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box modal-wide">
+      <div class="modal-header-row">
+        <div class="modal-title">
+          <svg class="sci-icon" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Каталог и докачка нейросетевых моделей
+        </div>
+        <button class="modal-close-icon" id="models-modal-close">&times;</button>
+      </div>
+      <div id="models-modal-body" class="models-modal-content"></div>
+      <div class="modal-actions">
+        <button id="models-modal-done" class="btn-primary">ЗАКРЫТЬ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- подключение скриптов -->
+  <script src="js/visualizer.js?v=2.2"></script>
+  <script src="js/typewriter.js?v=2.2"></script>
+  <script src="js/speakers.js?v=2.2"></script>
+  <script src="js/lyrics.js?v=2.2"></script>
+  <script src="js/export.js?v=2.2"></script>
+  <script src="js/app.js?v=2.2"></script>
+</body>
+</html>
