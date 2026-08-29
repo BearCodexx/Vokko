@@ -48,10 +48,20 @@ class FileExporter {
     let mime = 'text/plain;charset=utf-8';
 
     if (format === 'json') {
-      content = JSON.stringify(data, null, 2);
+      const exportJson = Object.assign({}, data, {
+        transcribed_by: 'Vokko',
+        service: 'Транскрибировано при помощи Vokko'
+      });
+      content = JSON.stringify(exportJson, null, 2);
       mime = 'application/json;charset=utf-8';
     } else if (format === 'lrc' && mode === 'music') {
-      const lines = [`[ti:${data.title || 'Композиция'}]`, `[ar:${data.artist || ''}]`, ''];
+      const lines = [
+        `[ti:${data.title || 'Композиция'}]`,
+        `[ar:${data.artist || ''}]`,
+        '[by:Vokko]',
+        '[re:Транскрибировано при помощи Vokko]',
+        ''
+      ];
       (data.blocks || []).forEach(b => {
         lines.push(`// ${b.title || ''}`);
         (b.lines || []).forEach(l => {
@@ -62,6 +72,14 @@ class FileExporter {
       content = lines.join('\n');
     } else {
       const lines = [];
+      const title = data.title || (mode === 'music' ? 'Музыкальная композиция' : 'Транскрипция аудио');
+      lines.push(title);
+      if (mode === 'music' && data.artist) {
+        lines.push(`Исполнитель, ${data.artist}`);
+      }
+      lines.push('Транскрибировано при помощи Vokko');
+      lines.push('========================================\n');
+
       if (mode === 'music') {
         (data.blocks || []).forEach(b => {
           lines.push(b.title || '[Куплет]');
@@ -77,6 +95,9 @@ class FileExporter {
           lines.push(parts.join(' '));
         });
       }
+
+      lines.push('\n========================================');
+      lines.push('Транскрибировано при помощи Vokko');
       content = lines.join('\n');
     }
 

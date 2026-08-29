@@ -82,6 +82,7 @@ class ExportEngine:
             lines.append(f"{title}")
             if artist:
                 lines.append(f"Исполнитель, {artist}")
+            lines.append("Транскрибировано при помощи Vokko")
             lines.append("=" * 40 + "\n")
 
             blocks = data.get("blocks", [])
@@ -92,6 +93,11 @@ class ExportEngine:
                     lines.append(clean_l)
                 lines.append("")
         else:
+            title = data.get("title", "Транскрипция аудио")
+            lines.append(f"{title}")
+            lines.append("Транскрибировано при помощи Vokko")
+            lines.append("=" * 40 + "\n")
+
             segments = data.get("segments", [])
             has_speakers = any("speaker" in s for s in segments)
             for s in segments:
@@ -103,6 +109,9 @@ class ExportEngine:
                 clean_s = self._clean_word_options(s.get("text", ""))
                 parts.append(clean_s)
                 lines.append(" ".join(parts))
+
+        lines.append("\n" + "=" * 40)
+        lines.append("Транскрибировано при помощи Vokko")
 
         with open(target, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -136,7 +145,8 @@ class ExportEngine:
         lrc_lines = [
             f"[ti:{data.get('title', 'Композиция')}]",
             f"[ar:{data.get('artist', 'Исполнитель')}]",
-            "[by:Vokko Cyber Transcription Engine]",
+            "[by:Vokko]",
+            "[re:Транскрибировано при помощи Vokko]",
             ""
         ]
 
@@ -171,11 +181,19 @@ class ExportEngine:
             section.right_margin = Inches(0.8)
 
         title_p = doc.add_paragraph()
-        title_run = title_p.add_run(data.get("title", "Транскрибация Vokko"))
+        title_run = title_p.add_run(data.get("title", "Транскрипция аудио"))
         title_run.font.name = "Calibri"
         title_run.font.size = Pt(18)
         title_run.bold = True
         title_run.font.color.rgb = RGBColor(0, 56, 46)
+
+        sub_p = doc.add_paragraph()
+        sub_p.paragraph_format.space_after = Pt(10)
+        sub_run = sub_p.add_run("Транскрибировано при помощи Vokko")
+        sub_run.font.name = "Calibri"
+        sub_run.font.size = Pt(10)
+        sub_run.italic = True
+        sub_run.font.color.rgb = RGBColor(0, 143, 101)
 
         if mode == "music":
             artist = data.get("artist")
@@ -234,6 +252,13 @@ class ExportEngine:
                 txt_run.font.name = "Calibri"
                 txt_run.font.size = Pt(11)
 
+        foot_p = doc.add_paragraph()
+        foot_p.paragraph_format.space_before = Pt(18)
+        foot_run = foot_p.add_run("Транскрибировано при помощи Vokko")
+        foot_run.font.name = "Calibri"
+        foot_run.font.size = Pt(9)
+        foot_run.font.color.rgb = RGBColor(140, 150, 145)
+
         doc.save(str(target))
         return str(target)
 
@@ -257,16 +282,16 @@ class ExportEngine:
             fontSize=16,
             leading=20,
             textColor=colors.HexColor("#00382e"),
-            spaceAfter=8
+            spaceAfter=4
         )
         subtitle_style = ParagraphStyle(
             "VokkoSubTitle",
             parent=styles["Normal"],
             fontName=self.pdf_font_name,
-            fontSize=11,
-            leading=14,
+            fontSize=10,
+            leading=13,
             textColor=colors.HexColor("#008f65"),
-            spaceAfter=12
+            spaceAfter=10
         )
         block_title_style = ParagraphStyle(
             "VokkoBlockTitle",
@@ -286,9 +311,19 @@ class ExportEngine:
             leading=14,
             textColor=colors.HexColor("#111827")
         )
+        footer_style = ParagraphStyle(
+            "VokkoFooter",
+            parent=styles["Normal"],
+            fontName=self.pdf_font_name,
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#888888"),
+            spaceBefore=14
+        )
 
         elements = []
-        elements.append(Paragraph(data.get("title", "Транскрибация Vokko"), title_style))
+        elements.append(Paragraph(data.get("title", "Транскрипция аудио"), title_style))
+        elements.append(Paragraph("Транскрибировано при помощи Vokko", subtitle_style))
 
         if mode == "music":
             artist = data.get("artist")
@@ -304,7 +339,7 @@ class ExportEngine:
                     elements.append(Paragraph(clean_l, text_style))
                 elements.append(Spacer(1, 8))
         else:
-            elements.append(Spacer(1, 10))
+            elements.append(Spacer(1, 6))
             segments = data.get("segments", [])
             table_data = []
 
@@ -329,6 +364,9 @@ class ExportEngine:
                 ]))
                 elements.append(t)
 
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph("Транскрибировано при помощи Vokko", footer_style))
+
         doc.build(elements)
         return str(target)
 
@@ -338,6 +376,9 @@ class ExportEngine:
         
         # очистка текстов от вариантов в экспорте json
         clean_data = dict(data)
+        clean_data["transcribed_by"] = "Vokko"
+        clean_data["service"] = "Транскрибировано при помощи Vokko"
+
         if "segments" in clean_data:
             clean_segs = []
             for s in clean_data["segments"]:
