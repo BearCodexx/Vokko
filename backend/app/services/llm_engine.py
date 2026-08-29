@@ -64,13 +64,7 @@ class LLMEngine:
 
         if not api_key:
             log_error("Ключ доступа к OpenRouter не указан в настройках")
-            _write_debug_log("ОШИБКА OPENROUTER", "Не указан API ключ OpenRouter")
             return None
-
-        _write_debug_log(
-            f"ЗАПРОС К OPENROUTER ({model_name}, T={temperature})",
-            f"--- СИСТЕМНЫЙ ПРОМПТ ---\n{system_prompt}\n\n--- ПОЛЬЗОВАТЕЛЬСКИЙ ТЕКСТ ---\n{prompt}"
-        )
 
         payload = {
             "model": model_name,
@@ -97,12 +91,9 @@ class LLMEngine:
                 ans = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
                 if ans:
                     log_info(f"Успешный ответ от OpenRouter ({model_name})")
-                    _write_debug_log(f"СЫРОЙ ОТВЕТ OPENROUTER ({model_name})", ans)
                 return ans
         except Exception as e:
-            err_msg = str(e)
-            log_error(f"Сбой обращения к OpenRouter: {err_msg}")
-            _write_debug_log("СБОЙ OPENROUTER", err_msg)
+            log_error(f"Сбой обращения к OpenRouter: {e}")
             return None
 
     # вызов сервера ollama с точным сопоставлением выбранной модели
@@ -114,7 +105,6 @@ class LLMEngine:
         available_models = self._get_available_ollama_models(base_url)
         if not available_models:
             log_error(f"Сервер Ollama не отвечает или нет установленных моделей по адресу {base_url}")
-            _write_debug_log("ОШИБКА OLLAMA", f"Сервер не отвечает по адресу {base_url}")
             return None
 
         # поиск точного или наиболее близкого имени модели
@@ -133,11 +123,6 @@ class LLMEngine:
         if not target_model:
             general_llms = [m for m in available_models if "llama" in m.lower() or "qwen" in m.lower() or "gemma" in m.lower()]
             target_model = general_llms[0] if general_llms else available_models[0]
-
-        _write_debug_log(
-            f"ЗАПРОС К ЯЗЫКОВОЙ МОДЕЛИ ({target_model}, T={temperature})",
-            f"--- СИСТЕМНЫЙ ПРОМПТ ---\n{system_prompt}\n\n--- ПОЛЬЗОВАТЕЛЬСКИЙ ТЕКСТ ---\n{prompt}"
-        )
 
         payload = {
             "model": target_model,
@@ -162,12 +147,9 @@ class LLMEngine:
                 ans = data.get("message", {}).get("content", "").strip()
                 if ans:
                     log_info(f"Успешный ответ от языковой модели ({target_model})")
-                    _write_debug_log(f"СЫРОЙ ОТВЕТ МОДЕЛИ ({target_model})", ans)
                 return ans
         except Exception as e:
-            err_msg = str(e)
-            log_error(f"Сбой обращения к языковой модели: {err_msg}")
-            _write_debug_log("СБОЙ ЗАПРОСА К МОДЕЛИ", err_msg)
+            log_error(f"Сбой обращения к языковой модели: {e}")
             return None
 
     # единая точка вызова генерации ответа в зависимости от выбранной модели
