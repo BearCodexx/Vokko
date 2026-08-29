@@ -3,7 +3,7 @@
 # VOKKO
 ### Universal Neural Speech & Music Intelligence Workstation
 
-Автономная платформа для расшифровки видео, аудиозаписей, подкастов, интервью и песен с изоляцией вокала нейросетью **Demucs**, поддержкой семейства моделей **Whisper** и многослойным синтезом **LLM**.
+Автономная утилита для расшифровки видео, аудиозаписей, подкастов, интервью и песен с изоляцией вокала нейросетью **Demucs**, поддержкой семейства моделей **Whisper** и многослойным синтезом **LLM**.
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -120,7 +120,7 @@
 
 | Компонент | Минимальные | Рекомендуемые |
 | :--- | :--- | :--- |
-| **Видеокарта** | NVIDIA GPU 4 ГБ VRAM / Многопоточный CPU | NVIDIA RTX (6–8+ ГБ VRAM, CUDA) |
+| **Видеокарта** | NVIDIA GPU 2-4+ ГБ VRAM / Многопоточный CPU | NVIDIA RTX (6-8+ ГБ VRAM, CUDA) |
 | **Оперативная память** | 8 ГБ RAM | 16 ГБ RAM |
 | **Операционная система** | Windows 10/11, Linux (Ubuntu/Debian), macOS | Windows 11 / Ubuntu 22.04+ |
 | **Python** | Python 3.10 – 3.11 | Python 3.10 |
@@ -131,8 +131,8 @@
 
 ### 1. Клонирование репозитория
 ```bash
-git clone https://github.com/your-username/vokko.git
-cd vokko
+git clone https://github.com/BearCodexx/Vokko.git
+cd Vokko
 ```
 
 ### 2. Создание окружения и установка зависимостей
@@ -184,11 +184,11 @@ Vokko/
 │   │   └── main.py                    # Инициализация FastAPI приложения
 │   └── requirements.txt               # Список зависимостей Python
 ├── frontend/
-│   ├── index.html                     # Главная страница Sci-Fi HUD интерфейса
+│   ├── index.html                     # Главная страница
 │   ├── css/
 │   │   ├── hud.css                    # Стеклянные панели, кнопки, переключатели
 │   │   ├── style.css                  # Сетки, 3D Canvas, стили
-│   │   └── themes.css                 # Цветовые темы (Dark, Light, System)
+│   │   └── themes.css                 # Цветовые темы
 │   └── js/
 │       ├── app.js                     # Главный контроллер приложения
 │       ├── visualizer.js              # Отрисовка живой спектрограммы звука
