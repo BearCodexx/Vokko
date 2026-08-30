@@ -141,7 +141,7 @@ def run_wizard_if_needed() -> bool:
         # этап предложения пройти мастер
         if cur_step == "ask_start":
             print(f"\n{CLR_CYAN}Добро пожаловать в платформу Vokko{CLR_RESET}")
-            print(f"{CLR_DIM}Вы можете пройти быструю настройку и выбрать модели для распознавания")
+            print(f"{CLR_DIM}Вы можете пройти быструю настройку и выбрать движок и модели для распознавания")
             print(f"и нейрокоррекции, либо пропустить и перейти сразу в веб-интерфейс{CLR_RESET}\n")
 
             try:
@@ -157,22 +157,51 @@ def run_wizard_if_needed() -> bool:
                 return True
 
             state["status"] = "in_progress"
+            state["step"] = "select_engine"
+            _save_wizard_state(state)
+            continue
+
+        # этап выбора движка распознавания речи
+        if cur_step == "select_engine":
+            print("\n" + f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
+            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 1/4: ВЫБОР ДВИЖКА РАСПОЗНАВАНИЯ (WHISPER ENGINE){CLR_RESET}")
+            print(f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}\n")
+
+            print(f"  [{CLR_BOLD}{CLR_MAGENTA}1{CLR_RESET}] {CLR_BOLD}{CLR_GREEN}faster-whisper{CLR_RESET} {CLR_CYAN}(CTranslate2 + Silero VAD, ускорение 8-10x, рекомендуется для всех видео){CLR_RESET}")
+            print(f"  [{CLR_BOLD}{CLR_MAGENTA}2{CLR_RESET}] {CLR_BOLD}{CLR_CYAN}openai-whisper{CLR_RESET} {CLR_DIM}(PyTorch, оригинальный базовый движок для коротких записей){CLR_RESET}\n")
+            print(f"{CLR_DIM}Для возврата назад введите: {CLR_BOLD}{CLR_CYAN}b / back / назад{CLR_RESET}")
+
+            try:
+                eng_input = input(f"\n{CLR_CYAN}Выберите номер движка [{CLR_BOLD}{CLR_MAGENTA}по умолчанию: 1 (faster-whisper){CLR_RESET}{CLR_CYAN}]: {CLR_RESET}").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{CLR_MAGENTA}Прервано, прогресс сохранен{CLR_RESET}")
+                return False
+
+            if eng_input in ["b", "back", "назад"]:
+                state["step"] = "ask_start"
+                _save_wizard_state(state)
+                continue
+
+            selected_engine = "openai-whisper" if eng_input in ["2", "openai", "pytorch"] else "faster-whisper"
+            state["selected_engine"] = selected_engine
             state["step"] = "select_asr"
             _save_wizard_state(state)
+            print(f"{CLR_GREEN}Выбран движок: {selected_engine}{CLR_RESET}")
             continue
 
         # этап выбора моделей распознавания речи
         asr_keys = list(WHISPER_MODELS.keys())
         if cur_step == "select_asr":
+            current_engine = state.get("selected_engine", "faster-whisper")
             print("\n" + f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
-            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 1/3: ВЫБОР МОДЕЛЕЙ РАСПОЗНАВАНИЯ РЕЧИ (WHISPER ASR){CLR_RESET}")
+            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 2/4: ВЫБОР МОДЕЛЕЙ WHISPER ДЛЯ ДВИЖКА [{CLR_BOLD}{CLR_MAGENTA}{current_engine}{CLR_RESET}{CLR_CYAN}]{CLR_RESET}")
             print(f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
 
             asr_headers = ["№", "Модель (Параметры)", "Точность / WER", "Скорость", "VRAM", "SSD", "Наличие"]
             asr_rows = []
             for idx, k in enumerate(asr_keys, 1):
                 m = WHISPER_MODELS[k]
-                has = "[ЕСТЬ]" if is_model_downloaded(k) else "[НЕТ]"
+                has = "[ЕСТЬ]" if is_model_downloaded(k, engine=current_engine) else "[НЕТ]"
                 asr_rows.append([
                     str(idx),
                     m["name"],
@@ -195,7 +224,7 @@ def run_wizard_if_needed() -> bool:
 
             # обработка возврата назад
             if user_input in ["b", "back", "назад"]:
-                state["step"] = "ask_start"
+                state["step"] = "select_engine"
                 _save_wizard_state(state)
                 continue
 
@@ -216,14 +245,14 @@ def run_wizard_if_needed() -> bool:
             state["selected_asr"] = selected_asr
             state["step"] = "select_llm"
             _save_wizard_state(state)
-            print(f"{CLR_GREEN}Выбрано для Whisper: {', '.join(selected_asr)}{CLR_RESET}")
+            print(f"{CLR_GREEN}Выбрано для Whisper ({current_engine}): {', '.join(selected_asr)}{CLR_RESET}")
             continue
 
         # этап выбора языковых моделей для нейрокоррекции
         llm_keys = list(LLM_MODELS.keys())
         if cur_step == "select_llm":
             print("\n" + f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
-            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 2/3: ВЫБОР МОДЕЛЕЙ НЕЙРОКОРРЕКЦИИ (LLM / SLM GGUF / ОБЛАКО){CLR_RESET}")
+            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 3/4: ВЫБОР МОДЕЛЕЙ НЕЙРОКОРРЕКЦИИ (LLM / SLM GGUF / ОБЛАКО){CLR_RESET}")
             print(f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
 
             llm_headers = ["№", "Модель", "Категория", "Качество", "Скорость", "VRAM", "SSD", "Статус"]
@@ -323,32 +352,35 @@ def run_wizard_if_needed() -> bool:
 
         # этап скачивания выбранных весов с индикатором
         if cur_step == "downloading":
+            current_engine = state.get("selected_engine", "faster-whisper")
             print("\n" + f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
-            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 3/3: ЗАГРУЗКА ВЫБРАННЫХ МОДЕЛЕЙ{CLR_RESET}")
+            print(f"  {CLR_BOLD}{CLR_CYAN}ШАГ 4/4: ЗАГРУЗКА ВЫБРАННЫХ МОДЕЛЕЙ{CLR_RESET}")
             print(f"{CLR_DIM}" + "=" * 80 + f"{CLR_RESET}")
 
             all_to_download = []
             for asr_id in state.get("selected_asr", []):
-                if not is_model_downloaded(asr_id):
-                    all_to_download.append((asr_id, WHISPER_MODELS[asr_id]["name"]))
+                if not is_model_downloaded(asr_id, engine=current_engine):
+                    all_to_download.append((asr_id, WHISPER_MODELS[asr_id]["name"], "asr"))
 
             for llm_id in state.get("selected_llm", []):
                 if llm_id not in ["none", "custom-ollama", "openrouter"] and not is_model_downloaded(llm_id):
-                    all_to_download.append((llm_id, LLM_MODELS[llm_id]["name"]))
+                    all_to_download.append((llm_id, LLM_MODELS[llm_id]["name"], "llm"))
 
             if not all_to_download:
                 print(f"{CLR_GREEN}Все выбранные модели уже готовы к работе{CLR_RESET}")
             else:
                 print(f"{CLR_MAGENTA}Требуется загрузить моделей: {len(all_to_download)}{CLR_RESET}\n")
-                for m_id, m_name in all_to_download:
+                for m_id, m_name, m_type in all_to_download:
                     print(f"{CLR_CYAN}Загрузка: {m_name}...{CLR_RESET}")
                     cb = lambda d, t, p, name=m_name: _cli_progress_bar(d, t, p, name)
-                    success = download_model_file(m_id, progress_callback=cb)
+                    target_eng = current_engine if m_type == "asr" else "openai-whisper"
+                    success = download_model_file(m_id, engine=target_eng, progress_callback=cb)
                     if not success:
                         print(f"{CLR_MAGENTA}Не удалось загрузить {m_name}, вы сможете докачать ее позже из интерфейса{CLR_RESET}")
 
-            # сохранение активных моделей в конфигурацию
+            # сохранение активных моделей и движка в конфигурацию
             cfg = load_app_config()
+            cfg["whisper_engine"] = current_engine
             if state.get("selected_asr"):
                 cfg["active_asr_model"] = state["selected_asr"][-1]
             if state.get("selected_llm"):

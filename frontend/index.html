@@ -227,6 +227,35 @@
             </button>
           </div>
 
+          <!-- ряд выбора движка и параметров скорости ASR -->
+          <div class="settings-row" style="margin-top: 10px; gap: 12px; flex-wrap: wrap;">
+            <!-- селектор движка ASR -->
+            <div class="model-select-group" style="flex: 1; min-width: 220px;">
+              <label class="model-select-label">
+                <svg class="sci-icon" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                Движок Whisper:
+              </label>
+              <div class="select-wrapper">
+                <select id="general-engine-select" class="sci-select">
+                  <option value="faster-whisper" selected>faster-whisper (CTranslate2, быстрый)</option>
+                  <option value="openai-whisper">openai-whisper (PyTorch, базовый)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- параметр поиска по лучам beam size -->
+            <div class="model-select-group" style="flex: 1; min-width: 220px;">
+              <label class="model-select-label" title="Число лучей поиска вариантов. 1 = быстрый, 5 = максимальный поиск">
+                Поиск (Beam Size):
+                <span id="general-beam-badge" style="color:var(--electric-cyan); font-weight:bold; margin-left:6px;">1 (Быстрый)</span>
+              </label>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                <input type="range" id="general-beam-size" min="1" max="5" value="1" step="1" style="flex:1; accent-color:var(--electric-cyan);">
+                <span id="general-beam-val" style="font-size:11px; color:var(--neon-green); font-family:'Share Tech Mono'; min-width:25px;">1</span>
+              </div>
+            </div>
+          </div>
+
           <!-- компактные тумблеры, расположенные рядом с заголовком -->
           <div class="toggles-compact-row">
             <label class="compact-toggle">
@@ -276,6 +305,18 @@
                 <span style="font-size:11px; color:var(--text-muted); font-family:'Share Tech Mono';">1 = стабильный, 2–5 = синтез</span>
               </div>
             </div>
+
+            <!-- блок размера батча обработки -->
+            <div id="general-batch-box" class="llm-config-subgroup" style="display:none; margin-top:8px;">
+              <label class="model-select-label" title="Размер порции аудио для обработки моделью до завершения фразы спикера">
+                Размер батча (минуты):
+                <span id="general-batch-badge" style="color:var(--electric-cyan); font-weight:bold; margin-left:6px;">8 мин (до завершения реплики)</span>
+              </label>
+              <div style="display:flex; align-items:center; gap:12px; margin-top:4px;">
+                <input type="range" id="general-batch-size" min="2" max="30" value="8" step="1" style="flex:1; accent-color:var(--electric-cyan);">
+                <span id="general-batch-val" style="font-size:11px; color:var(--neon-green); font-family:'Share Tech Mono'; min-width:45px;">8 мин</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -298,15 +339,19 @@
         <div class="process-steps-list">
           <div class="step-item" id="gen-step-1">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>1. Загрузка и проверка формата аудио</span>
+            <span>1. Загрузка аудио</span>
           </div>
           <div class="step-item" id="gen-step-2">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>2. Распознавание речи моделью Whisper</span>
+            <span>2. Распознавание речи (Whisper)</span>
           </div>
           <div class="step-item" id="gen-step-3">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>3. Диаризация спикеров и привязка таймкодов</span>
+            <span>3. Разделение спикеров</span>
+          </div>
+          <div class="step-item" id="gen-step-4">
+            <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>4. Коррекция текста (LLM)</span>
           </div>
         </div>
 
@@ -483,19 +528,19 @@
         <div class="process-steps-list">
           <div class="step-item" id="mus-step-1">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>1. Загрузка трека в исходном качестве</span>
+            <span>1. Загрузка аудио</span>
           </div>
           <div class="step-item" id="mus-step-2">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>2. Demucs изоляция чистого вокала от инструментала</span>
+            <span>2. Разделение вокала и музыки (Demucs)</span>
           </div>
           <div class="step-item" id="mus-step-3">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>3. Распознавание текста песни через Whisper</span>
+            <span>3. Распознавание текста песни (Whisper)</span>
           </div>
           <div class="step-item" id="mus-step-4">
             <svg class="sci-icon" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"></polyline></svg>
-            <span>4. Интеллектуальный анализ куплетов и припевов</span>
+            <span>4. Разметка куплетов и припевов (LLM)</span>
           </div>
         </div>
 

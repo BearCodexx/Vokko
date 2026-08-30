@@ -52,9 +52,10 @@ class VokkoApp {
   }
 
   // загрузка каталога доступных моделей распознавания и языковой коррекции
-  async loadModelsCatalog() {
+  async loadModelsCatalog(engine) {
     try {
-      const resp = await fetch('/api/models');
+      const activeEngine = engine || document.getElementById('general-engine-select')?.value || 'faster-whisper';
+      const resp = await fetch(`/api/models?engine=${encodeURIComponent(activeEngine)}`);
       if (!resp.ok) return;
       this.modelsCatalog = await resp.json();
       this.populateModelSelectors();
@@ -140,6 +141,11 @@ class VokkoApp {
 
     advPanel.style.display = 'block';
     if (layBox) layBox.style.display = 'block';
+
+    const batchBox = document.getElementById('general-batch-box');
+    if (batchBox) {
+      batchBox.style.display = prefix === 'general' ? 'block' : 'none';
+    }
 
     if (val === 'openrouter') {
       if (orBox) orBox.style.display = 'block';
@@ -283,11 +289,13 @@ class VokkoApp {
       `;
     }
 
+    const currentEngine = document.getElementById('general-engine-select')?.value || 'faster-whisper';
+
     try {
       await fetch('/api/models/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: modelId })
+        body: JSON.stringify({ model_id: modelId, engine: currentEngine })
       });
       this.pollModelDownload(modelId);
     } catch (e) {
@@ -397,6 +405,45 @@ class VokkoApp {
         });
       }
     });
+
+    // привязка слайдера размера батча
+    const batchSlider = document.getElementById('general-batch-size');
+    const batchBadge = document.getElementById('general-batch-badge');
+    const batchVal = document.getElementById('general-batch-val');
+    if (batchSlider) {
+      batchSlider.addEventListener('input', e => {
+        const v = e.target.value;
+        if (batchBadge) batchBadge.textContent = `${v} мин (до завершения реплики)`;
+        if (batchVal) batchVal.textContent = `${v} мин`;
+      });
+    }
+
+    // привязка слайдера поиска по лучам beam size
+    const beamSlider = document.getElementById('general-beam-size');
+    const beamBadge = document.getElementById('general-beam-badge');
+    const beamVal = document.getElementById('general-beam-val');
+    if (beamSlider) {
+      const beamDesc = {
+        '1': '1 (Сверхбыстрый)',
+        '2': '2 (Быстрый)',
+        '3': '3 (Оптимальный)',
+        '4': '4 (Тщательный)',
+        '5': '5 (Глубокий поиск)'
+      };
+      beamSlider.addEventListener('input', e => {
+        const v = e.target.value;
+        if (beamBadge) beamBadge.textContent = beamDesc[v] || `${v}`;
+        if (beamVal) beamVal.textContent = `${v}`;
+      });
+    }
+
+    // смена движка Whisper и обновление доступности моделей
+    const engineSel = document.getElementById('general-engine-select');
+    if (engineSel) {
+      engineSel.addEventListener('change', () => {
+        this.loadModelsCatalog(engineSel.value);
+      });
+    }
 
     // запуск обработки
     document.getElementById('btn-start-general').addEventListener('click', () => this.startGeneralTranscription());
@@ -520,6 +567,9 @@ class VokkoApp {
     const asrModel = document.getElementById('general-asr-select')?.value || 'large-v3';
     const llmModel = document.getElementById('general-llm-select')?.value || 'none';
     const llmLayers = parseInt(document.getElementById('general-llm-layers')?.value || '1', 10);
+    const batchMinutes = parseFloat(document.getElementById('general-batch-size')?.value || '8');
+    const engineType = document.getElementById('general-engine-select')?.value || 'faster-whisper';
+    const beamSize = parseInt(document.getElementById('general-beam-size')?.value || '1', 10);
     const taskId = this.generateTaskId();
 
     await this.syncCustomLlmSettings('general');
@@ -541,6 +591,9 @@ class VokkoApp {
       formData.append('asr_model', asrModel);
       formData.append('llm_model', llmModel);
       formData.append('llm_layers', llmLayers);
+      formData.append('batch_minutes', batchMinutes);
+      formData.append('whisper_engine_type', engineType);
+      formData.append('beam_size', beamSize);
 
       const response = await fetch('/api/transcribe/general', {
         method: 'POST',
@@ -647,7 +700,12 @@ class VokkoApp {
   }
 
   updateGeneralStep(stage, total) {
-    const steps = [document.getElementById('gen-step-1'), document.getElementById('gen-step-2'), document.getElementById('gen-step-3')];
+    const steps = [
+      document.getElementById('gen-step-1'),
+      document.getElementById('gen-step-2'),
+      document.getElementById('gen-step-3'),
+      document.getElementById('gen-step-4')
+    ];
     const fill = document.getElementById('general-progress-fill');
 
     steps.forEach((el, idx) => {
@@ -662,7 +720,7 @@ class VokkoApp {
     });
 
     if (fill) {
-      const pct = Math.min(100, Math.round((stage / (total || 3)) * 100));
+      const pct = Math.min(100, Math.round((stage / (total || 4)) * 100));
       fill.style.width = `${pct}%`;
     }
   }
@@ -697,7 +755,7 @@ class VokkoApp {
     document.getElementById('general-input-form').style.display = 'none';
     document.getElementById('general-processing-hud').style.display = 'block';
     document.getElementById('general-result-panel').style.display = 'none';
-    this.updateGeneralStep(1, 3);
+    this.updateGeneralStep(1, 4);
   }
 
   hideGeneralProgress() {
