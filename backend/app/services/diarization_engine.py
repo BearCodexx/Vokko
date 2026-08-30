@@ -1,9 +1,71 @@
 import os
-from pathlib import Path
+import sys
+import time
+import shutil
+import pathlib
 from typing import List, Dict, Any, Optional
 import numpy as np
+import librosa
+import torch
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.preprocessing import normalize
 from backend.app.core.audio_utils import load_and_normalize_audio
+from backend.app.core.logger import log_info, log_error
+
+# Monkey patch для обхода проблемы с симлинками в Windows без прав администратора
+_original_symlink = pathlib.Path.symlink_to
+def _safe_symlink(self, target, target_is_directory=False):
+    try:
+        _original_symlink(self, target, target_is_directory)
+    except OSError:
+        if self.exists():
+            self.unlink()
+        if pathlib.Path(target).is_dir():
+            shutil.copytree(target, self)
+        else:
+            shutil.copy2(target, self)
+pathlib.Path.symlink_to = _safe_symlink
+
+# Ленивая загрузка SpeechBrain
+_classifier_cache = None
+def _get_speaker_classifier():
+    global _classifier_cache
+    if _classifier_cache is None:
+        try:
+            from speechbrain.inference.speaker import EncoderClassifier
+            log_info("Загрузка нейросети для диаризации (SpeechBrain ECAPA-TDNN)...")
+            _classifier_cache = EncoderClassifier.from_hparams(
+                source="speechbrain/spkrec-ecapa-voxceleb",
+                savedir="models/speechbrain",
+                run_opts={"device": "cuda:0" if torch.cuda.is_available() else "cpu"}
+            )
+        except ImportError:
+            log_error("SpeechBrain не установлен. Выполните: pip install speechbrain")
+            return None
+        except Exception as e:
+            log_error(f"Сбой загрузки SpeechBrain: {e}")
+            return None
+    return _classifier_cache
+
+# цветовая палитра для динамического прогресс-бара
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_CYAN = "\033[96m"
+CLR_GREEN = "\033[92m"
+CLR_MAGENTA = "\033[95m"
+CLR_DIM = "\033[90m"
+
+# отрисовка бегущей строки прогресса диаризации в одну строку
+def _render_live_diarize_bar(current: int, total: int, is_final: bool = False):
+    bar_len = 26
+    pct = min(100.0, (current / max(1, total)) * 100.0)
+    filled = int(bar_len * (pct / 100.0))
+    bar = f"{CLR_GREEN}{'=' * filled}{CLR_DIM}{'-' * (bar_len - filled)}{CLR_RESET}"
+    sys.stdout.write(f"\r  [{bar}] {CLR_CYAN}{pct:5.1f}%{CLR_RESET} ({current}/{total} сегментов) | {CLR_MAGENTA}Нейроанализ голосов (ИИ){CLR_RESET}   ")
+    sys.stdout.flush()
+    if is_final:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 # модуль разделения спикеров, сопоставление реплик и голосов
 class DiarizationEngine:
@@ -11,75 +73,119 @@ class DiarizationEngine:
     def __init__(self, default_num_speakers: Optional[int] = None):
         self.default_num_speakers = default_num_speakers
 
-    # извлечение акустических признаков сегмента, вычисление спектра
+    # извлечение многомерного нейросетевого профиля голоса (X-Vector) с помощью ECAPA-TDNN
     def _extract_segment_features(self, audio_data: np.ndarray, sr: int, start_sec: float, end_sec: float) -> np.ndarray:
+        duration = end_sec - start_sec
+        # для очень коротких реплик берем дополнительный контекст
+        if duration < 0.8:
+            pad = (0.8 - duration) / 2.0
+            start_sec = max(0.0, start_sec - pad)
+            end_sec = min(len(audio_data) / sr, end_sec + pad)
+
         start_sample = int(max(0, start_sec * sr))
         end_sample = int(min(len(audio_data), end_sec * sr))
 
-        if end_sample <= start_sample + 512:
-            return np.zeros(24)
+        if end_sample <= start_sample + 320:
+            return np.zeros(192, dtype=np.float32)
 
         chunk = audio_data[start_sample:end_sample]
 
-        # вычисление базовых характеристик спектра, энергия и переходы через ноль
-        fft_vals = np.abs(np.fft.rfft(chunk, n=1024))
-        freqs = np.fft.rfftfreq(1024, d=1.0 / sr)
+        # Базовая очистка от пауз и фонового шума
+        intervals = librosa.effects.split(chunk, top_db=30)
+        if len(intervals) > 0:
+            chunk = np.concatenate([chunk[s:e] for s, e in intervals])
 
-        spectral_centroid = np.sum(freqs * fft_vals) / (np.sum(fft_vals) + 1e-9)
-        spectral_energy = np.mean(chunk ** 2)
-        zero_crossings = np.mean(np.abs(np.diff(np.sign(chunk))))
+        if len(chunk) < sr * 0.3:
+            # если после очистки от тишины осталось меньше 0.3 сек звука, добиваем нулями
+            chunk = np.pad(chunk, (0, int(sr * 0.3) - len(chunk)))
 
-        # полосовые спектральные интервалы для разделения тембра
-        num_bands = 21
-        band_splits = np.array_split(fft_vals[:512], num_bands)
-        band_energies = [float(np.mean(b)) for b in band_splits]
+        classifier = _get_speaker_classifier()
+        if not classifier:
+            return np.zeros(192, dtype=np.float32)
 
-        features = [spectral_centroid, spectral_energy, zero_crossings] + band_energies
-        return np.array(features, dtype=np.float32)
+        try:
+            # Передаем аудиосигнал в тензор и извлекаем x-vector (размерность 192)
+            tensor_chunk = torch.from_numpy(chunk).unsqueeze(0).to(classifier.device)
+            # speechbrain ожидает 16кГц
+            emb = classifier.encode_batch(tensor_chunk)
+            return emb.squeeze().cpu().numpy()
+        except Exception:
+            return np.zeros(192, dtype=np.float32)
+
+    # диаризация списка сегментов, присвоение меток спикеров
+    def diarize(self, audio_path: str, segments: List[Dict[str, Any]], num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
+        return self.diarize_segments(audio_path, segments, num_speakers=num_speakers)
 
     # диаризация списка сегментов, присвоение меток спикеров
     def diarize_segments(self, audio_path: str, segments: List[Dict[str, Any]], num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
         if not segments:
             return []
 
+        total_segments = len(segments)
+        _render_live_diarize_bar(0, total_segments, is_final=False)
+
         try:
             mono, sr = load_and_normalize_audio(audio_path, target_sr=16000)
 
             feature_list = []
-            for seg in segments:
+            last_log_time = 0.0
+            for idx, seg in enumerate(segments, 1):
                 feat = self._extract_segment_features(mono, sr, seg["start"], seg["end"])
                 feature_list.append(feat)
 
+                now = time.time()
+                if now - last_log_time >= 0.25 or idx == total_segments or idx % 25 == 0:
+                    last_log_time = now
+                    _render_live_diarize_bar(idx, total_segments, is_final=(idx == total_segments))
+
             x = np.array(feature_list)
-            # нормализация матрицы признаков, центрирование
-            mean = np.mean(x, axis=0)
-            std = np.std(x, axis=0) + 1e-6
-            x_norm = (x - mean) / std
+            
+            # подстановка ближайших валидных эмбеддингов вместо нулевых векторов
+            zero_masks = np.all(x == 0, axis=1)
+            if np.any(zero_masks) and not np.all(zero_masks):
+                valid_indices = np.where(~zero_masks)[0]
+                for z_idx in np.where(zero_masks)[0]:
+                    nearest = valid_indices[np.argmin(np.abs(valid_indices - z_idx))]
+                    x[z_idx] = x[nearest]
+
+            # Нормализация на единичную сферу (L2-норма)
+            x_norm = normalize(x)
 
             n_samples = len(segments)
             if num_speakers is None:
-                # оценка количества говорящих по объему сегментов
                 n_clusters = 2 if n_samples >= 4 else 1
             else:
                 n_clusters = max(1, min(num_speakers, n_samples))
 
             if n_clusters > 1 and n_samples >= n_clusters:
-                clustering = AgglomerativeClustering(n_clusters=n_clusters, metric="euclidean", linkage="ward")
-                labels = clustering.fit_predict(x_norm)
+                # Ward-linkage на L2-нормализованных векторах предотвращает коллапс в один кластер из-за выбросов
+                clustering = AgglomerativeClustering(n_clusters=n_clusters, linkage="ward")
+                raw_labels = clustering.fit_predict(x_norm)
             else:
-                labels = [0] * n_samples
+                raw_labels = [0] * n_samples
+
+            # Хронологическая нумерация спикеров по порядку их появления в аудио
+            speaker_mapping = {}
+            next_speaker_id = 1
+            final_labels = []
+            for l in raw_labels:
+                if l not in speaker_mapping:
+                    speaker_mapping[l] = next_speaker_id
+                    next_speaker_id += 1
+                final_labels.append(speaker_mapping[l])
 
             result_segments = []
             for idx, seg in enumerate(segments):
-                label_id = int(labels[idx]) + 1
+                label_id = int(final_labels[idx])
                 updated = dict(seg)
                 updated["speaker"] = f"Спикер {label_id}"
                 updated["speaker_id"] = label_id
                 result_segments.append(updated)
 
+            log_info(f"Диаризация завершена: 100% | Выделено спикеров: {len(speaker_mapping)}")
             return result_segments
-        except Exception:
-            # в случае ошибки присваиваем единого спикера
+        except Exception as e:
+            log_error(f"Сбой диаризации: {e}")
             for s in segments:
                 s["speaker"] = "Спикер 1"
                 s["speaker_id"] = 1
