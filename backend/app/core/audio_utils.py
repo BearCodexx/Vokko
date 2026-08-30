@@ -7,7 +7,21 @@ import av
 
 # модуль загрузки звуковых данных с сохранением исходной частоты дискретизации
 def load_and_normalize_audio(file_path: str, target_sr: int = 16000, layout: str = "mono") -> Tuple[np.ndarray, int]:
-    # чтение аудиопотока через медиа библиотеку
+    # прямое чтение файла через soundfile для чистых звуковых форматов
+    try:
+        data, sr = sf.read(file_path)
+        if data is not None and len(data) > 0:
+            if layout == "mono" and data.ndim > 1:
+                data = np.mean(data, axis=1)
+            elif layout == "stereo" and data.ndim == 1:
+                data = np.stack([data, data])
+            elif layout == "stereo" and data.ndim > 1:
+                data = data.T
+            return data.astype(np.float32), sr
+    except Exception:
+        pass
+
+    # чтение медиаконтейнеров через библиотеку av
     try:
         container = av.open(file_path)
         resampler = av.AudioResampler(format="fltp", layout=layout, rate=target_sr)
@@ -16,6 +30,9 @@ def load_and_normalize_audio(file_path: str, target_sr: int = 16000, layout: str
         for frame in container.decode(audio=0):
             for resampled_frame in resampler.resample(frame):
                 audio_arrays.append(resampled_frame.to_ndarray())
+
+        for resampled_frame in resampler.resample(None):
+            audio_arrays.append(resampled_frame.to_ndarray())
 
         container.close()
         if audio_arrays:
@@ -26,20 +43,7 @@ def load_and_normalize_audio(file_path: str, target_sr: int = 16000, layout: str
     except Exception:
         pass
 
-    # запасной вариант прямого чтения файла через soundfile
-    try:
-        data, sr = sf.read(file_path)
-        if layout == "mono" and data.ndim > 1:
-            data = np.mean(data, axis=1)
-        elif layout == "stereo" and data.ndim == 1:
-            data = np.stack([data, data])
-        elif layout == "stereo" and data.ndim > 1:
-            data = data.T
-        return data.astype(np.float32), sr
-    except Exception:
-        if layout == "stereo":
-            return np.zeros((2, target_sr), dtype=np.float32), target_sr
-        return np.zeros(target_sr, dtype=np.float32), target_sr
+    raise RuntimeError(f"Не удалось декодировать аудиопоток из файла: {file_path}")
 
 # сохранение очищенного звукового файла в формате wav
 def convert_to_wav(input_path: str, output_path: Optional[str] = None, target_sr: int = 16000) -> str:
@@ -47,3 +51,22 @@ def convert_to_wav(input_path: str, output_path: Optional[str] = None, target_sr
     audio_data, sr = load_and_normalize_audio(input_path, target_sr=target_sr, layout="mono")
     sf.write(target, audio_data, sr, subtype="PCM_16")
     return target
+
+# быстрое определение длительности звуковой дорожки в секундах
+def get_audio_duration(file_path: str) -> float:
+    try:
+        info = sf.info(file_path)
+        if info.duration:
+            return float(info.duration)
+    except Exception:
+        pass
+    try:
+        container = av.open(file_path)
+        if container.duration:
+            dur = float(container.duration) / av.time_base
+            container.close()
+            return dur
+        container.close()
+    except Exception:
+        pass
+    return 0.0
