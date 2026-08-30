@@ -801,14 +801,35 @@ class VokkoApp {
     const box = document.getElementById(`${mode}-error-box`);
     const msg = document.getElementById(`${mode}-error-message`);
     if (box && msg) {
-      msg.innerText = message;
-      box.style.display = 'block';
+      if (message && (message.includes('18+') || message.includes('cookies.txt') || message.includes('Get cookies.txt') || message.includes('возрастное ограничение'))) {
+        box.classList.add('with-guide');
+        msg.innerHTML = `
+          <div class="cookies-guide-card">
+            <div class="guide-title">ВИДЕО ПОМЕЧЕНО КАК 18+ (ВОЗРАСТНОЕ ОГРАНИЧЕНИЕ)</div>
+            <div>YouTube блокирует прямое скачивание этого видео без подтверждения возраста. Чтобы скачивать 18+ видео напрямую по ссылке:</div>
+            <ol>
+              <li>Установите расширение <b>«Get cookies.txt LOCALLY»</b> в ваш браузер (Chrome / Zen / Firefox / Edge).</li>
+              <li>Откройте сайт <b>YouTube</b> в браузере и нажмите на значок расширения.</li>
+              <li>Экспортируйте файл, назовите его <code>cookies.txt</code>.</li>
+              <li>Положите файл <code>cookies.txt</code> в папку проекта <b>Vokko</b>.</li>
+            </ol>
+            <div class="guide-alt">Либо просто скачайте аудио/видео файл в браузере и перетащите его мышкой в окно загрузки Vokko.</div>
+          </div>
+        `;
+      } else {
+        box.classList.remove('with-guide');
+        msg.innerText = message;
+      }
+      box.style.display = 'flex';
     }
   }
 
   hideError(mode) {
     const box = document.getElementById(`${mode}-error-box`);
-    if (box) box.style.display = 'none';
+    if (box) {
+      box.classList.remove('with-guide');
+      box.style.display = 'none';
+    }
   }
 
   cleanFileName(title) {

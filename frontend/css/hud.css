@@ -448,10 +448,62 @@ input:checked + .slider:before {
   color: #fca5a5;
 }
 
+.hud-error-banner.with-guide {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
 .hud-error-banner .error-text {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+}
+
+.cookies-guide-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 4px;
+  padding: 14px 18px;
+  color: #e2e8f0;
+  width: 100%;
+}
+
+.cookies-guide-card .guide-title {
+  color: #f87171;
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.cookies-guide-card ol {
+  margin: 10px 0 10px 22px;
+  padding: 0;
+  line-height: 1.6;
+  font-size: 12px;
+}
+
+.cookies-guide-card ol li {
+  margin-bottom: 4px;
+}
+
+.cookies-guide-card code {
+  background: rgba(56, 189, 248, 0.15);
+  color: var(--neon-cyan, #38bdf8);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: 'Share Tech Mono', monospace;
+}
+
+.cookies-guide-card .guide-alt {
+  font-size: 11px;
+  color: var(--text-dim, #94a3b8);
+  border-top: 1px dashed rgba(255, 255, 255, 0.15);
+  padding-top: 8px;
+  margin-top: 8px;
 }
 
 /* блок результатов */

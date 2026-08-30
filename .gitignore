@@ -12,6 +12,7 @@ data/*.log
 data/*.json
 !data/.gitkeep
 debug_*.txt
+*cookies.txt
 
 # аудио и медиа файлы
 *.mp3

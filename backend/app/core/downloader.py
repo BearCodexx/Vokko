@@ -17,11 +17,24 @@ class MediaDownloader:
         self.output_dir = output_dir or UPLOAD_DIR
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    # поиск файла cookies.txt для доступа к закрытым или 18+ видео
+    def _find_cookie_file(self) -> Optional[str]:
+        candidates = [
+            Path("cookies.txt"),
+            Path("data/cookies.txt"),
+            Path("temp_storage/cookies.txt"),
+            Path("models/cookies.txt")
+        ]
+        for c in candidates:
+            if c.exists() and c.is_file() and c.stat().st_size > 0:
+                return str(c.resolve())
+        return None
+
     # подготовка параметров загрузки, обход проверок ботов
     def _build_ydl_options(self, target_id: str) -> Dict[str, Any]:
         output_template = str(self.output_dir / f"{target_id}.%(ext)s")
-        return {
-            "format": "ba/b[ext=m4a]/b[ext=mp4]/b",
+        opts = {
+            "format": "bestaudio/best/ba/b",
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
@@ -32,12 +45,13 @@ class MediaDownloader:
             "retries": 10,
             "fragment_retries": 10,
             "extractor_retries": 5,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "web_creator", "ios"]
-                }
-            }
+            "remote_components": ["ejs:github"],
+            "js_runtimes": {"node": {}} if shutil.which("node") else {}
         }
+        cookie_path = self._find_cookie_file()
+        if cookie_path:
+            opts["cookiefile"] = cookie_path
+        return opts
 
     # скачивание дорожки по ссылке с открытых платформ
     def download_url(self, url: str) -> Dict[str, Any]:
@@ -53,6 +67,7 @@ class MediaDownloader:
         duration = 0.0
         artist = ""
         raw_path = None
+        last_error_msg = ""
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -68,6 +83,7 @@ class MediaDownloader:
                     except Exception:
                         pass
         except Exception as dl_err:
+            last_error_msg = str(dl_err)
             log_error(f"Предупреждение загрузчика: {dl_err}")
             raw_path = self._try_direct_or_stream_download(clean_url, task_id)
 
@@ -78,6 +94,12 @@ class MediaDownloader:
                     break
 
         if not raw_path or not os.path.exists(raw_path):
+            err_lower = last_error_msg.lower()
+            if "confirm your age" in err_lower or "age-restricted" in err_lower or "inappropriate" in err_lower:
+                log_info("Видео помечено как 18+ (возрастное ограничение). Для решения: установите расширение 'Get cookies.txt LOCALLY' для своего браузера, зайдите на YouTube, экспортируйте файл, назовите его cookies.txt и положите в папку проекта.")
+                raise RuntimeError(
+                    "Видео помечено как 18+ (возрастное ограничение). Для решения: установите расширение 'Get cookies.txt LOCALLY' для своего браузера, зайдите на YouTube, экспортируйте файл, назовите его cookies.txt и положите в папку проекта."
+                )
             raise RuntimeError(f"Не удалось загрузить аудио по адресу: {clean_url}")
 
         clean_wav = self.output_dir / f"{task_id}_clean.wav"
