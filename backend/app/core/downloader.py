@@ -21,19 +21,20 @@ class MediaDownloader:
     def _build_ydl_options(self, target_id: str) -> Dict[str, Any]:
         output_template = str(self.output_dir / f"{target_id}.%(ext)s")
         return {
-            "format": "bestaudio/best",
+            "format": "ba/b[ext=m4a]/b[ext=mp4]/b",
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
             "ignoreerrors": False,
             "nocheckcertificate": True,
-            "socket_timeout": 20,
-            "retries": 5,
+            "socket_timeout": 60,
+            "retries": 10,
+            "fragment_retries": 10,
             "extractor_retries": 5,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "ios", "web_creator"]
+                    "player_client": ["android", "web_creator", "ios"]
                 }
             }
         }
@@ -72,13 +73,7 @@ class MediaDownloader:
 
         if not raw_path or not os.path.exists(raw_path):
             for candidate in self.output_dir.glob(f"{task_id}.*"):
-                if candidate.is_file() and not candidate.name.endswith(".wav"):
-                    raw_path = str(candidate)
-                    break
-
-        if not raw_path or not os.path.exists(raw_path):
-            for candidate in self.output_dir.glob(f"{task_id}*"):
-                if candidate.is_file() and not candidate.name.endswith(".wav"):
+                if candidate.is_file() and not candidate.name.endswith((".wav", ".part")):
                     raw_path = str(candidate)
                     break
 
@@ -101,13 +96,18 @@ class MediaDownloader:
         target = self.output_dir / f"{task_id}.audio"
         try:
             import requests
-            resp = requests.get(url, stream=True, timeout=20, verify=False)
+            resp = requests.get(url, stream=True, timeout=30, verify=False)
+            content_type = resp.headers.get("Content-Type", "").lower()
+            # отклонение веб страниц и текстовых ответов
+            if "text/html" in content_type or "text/plain" in content_type:
+                return None
             if resp.status_code == 200:
                 with open(target, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=65536):
                         if chunk:
                             f.write(chunk)
-                return str(target)
+                if target.stat().st_size > 1024 * 64:
+                    return str(target)
         except Exception:
             return None
         return None

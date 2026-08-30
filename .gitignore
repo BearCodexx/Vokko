@@ -31,8 +31,10 @@ debug_*.txt
 # модели весов
 models/llm/*.gguf
 models/whisper/*
+models/speechbrain/*
 !models/llm/.gitkeep
 !models/whisper/.gitkeep
+!models/speechbrain/.gitkeep
 
 # кэш python и среды разработки
 __pycache__/

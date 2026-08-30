@@ -1,12 +1,14 @@
 import os
+import sys
 import re
-import urllib.request
+import time
 import torch
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from backend.app.core.audio_utils import convert_to_wav
+from backend.app.core.audio_utils import convert_to_wav, get_audio_duration
 from backend.app.core.silence import silence_stderr
-from backend.app.core.logger import log_info, log_progress, log_error
+from backend.app.core.logger import log_info, log_error
+from backend.app.core.progress import set_task_progress
 from backend.app.core.models_manager import (
     WHISPER_MODELS,
     get_model_path,
@@ -14,6 +16,28 @@ from backend.app.core.models_manager import (
     is_model_downloaded,
     load_app_config
 )
+
+# цветовая палитра для динамического прогресс-бара
+CLR_RESET = "\033[0m"
+CLR_BOLD = "\033[1m"
+CLR_CYAN = "\033[96m"
+CLR_GREEN = "\033[92m"
+CLR_MAGENTA = "\033[95m"
+CLR_DIM = "\033[90m"
+
+# отрисовка бегущей строки прогресса транскрибации в одну строку
+def _render_live_transcribe_bar(current_sec: float, total_sec: float, segments_count: int, is_final: bool = False):
+    bar_len = 26
+    pct = min(100.0, (current_sec / max(1.0, total_sec)) * 100.0) if total_sec > 0 else 0.0
+    filled = int(bar_len * (pct / 100.0))
+    bar = f"{CLR_GREEN}{'=' * filled}{CLR_DIM}{'-' * (bar_len - filled)}{CLR_RESET}"
+    time_curr = WhisperEngine.format_timestamp(current_sec)
+    time_total = WhisperEngine.format_timestamp(total_sec) if total_sec > 0 else "..."
+    sys.stdout.write(f"\r  [{bar}] {CLR_CYAN}{pct:5.1f}%{CLR_RESET} ({time_curr} / {time_total}) | {CLR_MAGENTA}Сегментов: {segments_count}{CLR_RESET}   ")
+    sys.stdout.flush()
+    if is_final:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
 # модуль распознавания речи, преобразование звука в текст
 class WhisperEngine:
@@ -42,42 +66,71 @@ class WhisperEngine:
         cfg = load_app_config()
         self.model_size = model_size or cfg.get("active_asr_model", "large-v3")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model = None
-        self._loaded_model_name = None
+        self._faster_model = None
+        self._faster_loaded_name = None
+        self._openai_model = None
+        self._openai_loaded_name = None
 
-    # загрузка нейросетевой модели с проверкой наличия весов
-    def _load_model(self, target_name: Optional[str] = None):
+    # загрузка оптимизированной модели faster whisper на ctranslate2
+    def _load_faster_model(self, target_name: Optional[str] = None):
         model_name = target_name or self.model_size
-        if self._model is not None and self._loaded_model_name == model_name:
-            return self._model
+        if self._faster_model is not None and self._faster_loaded_name == model_name:
+            return self._faster_model
+
+        from faster_whisper import WhisperModel
+        from backend.app.core.config import MODELS_WHISPER_DIR
+        compute_type = "float16" if self.device == "cuda" else "int8"
+
+        # проверка локально скачанной модели
+        local_dir = MODELS_WHISPER_DIR / "faster" / model_name
+        if local_dir.exists() and any(f.name.endswith((".bin", ".safetensors")) for f in local_dir.glob("*")):
+            model_id = str(local_dir)
+            log_info(f"Загрузка локальной модели faster-whisper из {local_dir} на устройстве {self.device}")
+        else:
+            # приведение внутренних имен моделей к формату faster whisper
+            model_id = model_name
+            if model_name == "turbo":
+                model_id = "deepdml/faster-whisper-large-v3-turbo-ct2"
+            elif model_name == "large-v3":
+                model_id = "large-v3"
+            log_info(f"Загрузка движка faster-whisper ({model_id}) на устройстве {self.device} (при первом использовании выполняется загрузка весов)...")
+
+        try:
+            self._faster_model = WhisperModel(model_id, device=self.device, compute_type=compute_type)
+            self._faster_loaded_name = model_name
+            log_info(f"Модель faster-whisper ({model_name}) успешно загружена в память GPU")
+            return self._faster_model
+        except Exception as e:
+            log_error(f"Не удалось загрузить faster-whisper на GPU, пробуем CPU: {e}")
+            self._faster_model = WhisperModel(model_id, device="cpu", compute_type="int8")
+            self._faster_loaded_name = model_name
+            return self._faster_model
+
+    # загрузка стандартной модели openai whisper на pytorch
+    def _load_openai_model(self, target_name: Optional[str] = None):
+        model_name = target_name or self.model_size
+        if self._openai_model is not None and self._openai_loaded_name == model_name:
+            return self._openai_model
 
         import whisper
-        if not is_model_downloaded(model_name):
+        if not is_model_downloaded(model_name, engine="openai-whisper"):
             log_info(f"Скачивание весов модели Whisper {model_name}")
-            download_model_file(model_name)
+            download_model_file(model_name, engine="openai-whisper")
 
-        model_path = get_model_path(model_name)
+        model_path = get_model_path(model_name, engine="openai-whisper")
         load_target = str(model_path) if model_path and model_path.exists() else model_name
 
         with silence_stderr():
             try:
-                self._model = whisper.load_model(load_target, device=self.device)
-                self._loaded_model_name = model_name
-                log_info(f"Модель Whisper {model_name} готова на устройстве {self.device}")
-                return self._model
+                self._openai_model = whisper.load_model(load_target, device=self.device)
+                self._openai_loaded_name = model_name
+                log_info(f"Модель openai-whisper {model_name} готова на устройстве {self.device}")
+                return self._openai_model
             except Exception as e:
-                log_error(f"Не удалось загрузить Whisper {model_name} на GPU, пробуем запасной вариант: {str(e)}")
-
-            try:
-                self._model = whisper.load_model("base", device=self.device)
-                self._loaded_model_name = "base"
-                return self._model
-            except Exception:
-                pass
-
-            self._model = whisper.load_model("base", device="cpu")
-            self._loaded_model_name = "base"
-            return self._model
+                log_error(f"Не удалось загрузить openai-whisper на GPU: {e}")
+                self._openai_model = whisper.load_model("base", device="cpu")
+                self._openai_loaded_name = "base"
+                return self._openai_model
 
     # очистка строки от мусорных повторов, артефактов и циклов
     @classmethod
@@ -105,86 +158,202 @@ class WhisperEngine:
             return ""
         return cleaned
 
-    # транскрибация аудиосигнала в текст с защитой от зацикливания
+    # транскрибация аудиосигнала через быстрый движок faster whisper c vad фильтрацией
+    def _transcribe_faster(
+        self,
+        clean_path: str,
+        target_model: str,
+        beam_size: int,
+        language: Optional[str],
+        prompt: Optional[str],
+        is_music: bool,
+        task_id: Optional[str],
+        total_duration: float
+    ) -> Dict[str, Any]:
+        model = self._load_faster_model(target_model)
+        segments_data = []
+        full_text_list = []
+        last_log_time = 0.0
+
+        # запуск генератора распознавания с фильтрацией пауз
+        log_info(f"Старт декодирования аудиопотока через faster-whisper (длительность: {self.format_timestamp(total_duration)})...")
+        segments_gen, info = model.transcribe(
+            clean_path,
+            beam_size=beam_size,
+            vad_filter=not is_music,
+            initial_prompt=prompt if prompt else None,
+            language=language if language else None,
+            temperature=0.0 if not is_music else (0.0, 0.2, 0.4)
+        )
+
+        detected_lang = info.language or "ru"
+        last_added_text = ""
+
+        for idx, s in enumerate(segments_gen, 1):
+            text_clean = self._clean_text(s.text or "")
+            if not text_clean:
+                continue
+
+            if text_clean.lower() == last_added_text.lower():
+                continue
+
+            start_sec = round(float(s.start), 2)
+            end_sec = round(float(s.end), 2)
+
+            segments_data.append({
+                "id": idx,
+                "start": start_sec,
+                "end": end_sec,
+                "text": text_clean,
+                "start_str": self.format_timestamp(start_sec),
+                "end_str": self.format_timestamp(end_sec)
+            })
+            full_text_list.append(text_clean)
+            last_added_text = text_clean
+
+            # динамический вывод прогресса в одну строку консоли и обновление статуса
+            now = time.time()
+            if now - last_log_time >= 0.5 or idx == 1 or idx % 5 == 0:
+                last_log_time = now
+                _render_live_transcribe_bar(end_sec, total_duration, len(segments_data), is_final=False)
+                if task_id:
+                    pct = min(99, int((end_sec / max(1.0, total_duration)) * 100)) if total_duration > 0 else 0
+                    time_curr = self.format_timestamp(start_sec)
+                    time_total = self.format_timestamp(total_duration) if total_duration > 0 else "..."
+                    set_task_progress(task_id, 2, 3, f"Распознавание речи Whisper: {pct}% ({time_curr} / {time_total})")
+
+        _render_live_transcribe_bar(total_duration, total_duration, len(segments_data), is_final=True)
+        dur = segments_data[-1]["end"] if segments_data else total_duration
+        log_info(f"Транскрибация завершена: 100% | Всего распознано сегментов: {len(segments_data)}")
+
+        return {
+            "status": "success",
+            "text": " ".join(full_text_list),
+            "segments": segments_data,
+            "language": detected_lang,
+            "duration": dur
+        }
+
+    # транскрибация аудиосигнала через классический движок openai whisper
+    def _transcribe_openai(
+        self,
+        clean_path: str,
+        target_model: str,
+        beam_size: int,
+        language: Optional[str],
+        prompt: Optional[str],
+        is_music: bool
+    ) -> Dict[str, Any]:
+        model = self._load_openai_model(target_model)
+        segments_data = []
+        full_text_list = []
+
+        with silence_stderr():
+            transcribe_kwargs = {
+                "beam_size": beam_size,
+                "best_of": beam_size,
+                "condition_on_previous_text": not is_music
+            }
+            if is_music:
+                transcribe_kwargs.update({
+                    "no_speech_threshold": 0.8,
+                    "compression_ratio_threshold": 2.6,
+                    "temperature": (0.0, 0.2, 0.4, 0.6)
+                })
+            else:
+                transcribe_kwargs.update({
+                    "no_speech_threshold": 0.6,
+                    "compression_ratio_threshold": 2.4,
+                    "temperature": 0.0
+                })
+
+            if language:
+                transcribe_kwargs["language"] = language
+            if prompt and prompt.strip():
+                transcribe_kwargs["initial_prompt"] = prompt.strip()
+
+            res = model.transcribe(clean_path, **transcribe_kwargs)
+
+        raw_segs = res.get("segments", [])
+        last_added_text = ""
+
+        for idx, s in enumerate(raw_segs, 1):
+            text_clean = self._clean_text(s.get("text", ""))
+            if not text_clean:
+                continue
+
+            if text_clean.lower() == last_added_text.lower():
+                continue
+
+            start_sec = round(float(s.get("start", 0)), 2)
+            end_sec = round(float(s.get("end", 0)), 2)
+
+            segments_data.append({
+                "id": idx,
+                "start": start_sec,
+                "end": end_sec,
+                "text": text_clean,
+                "start_str": self.format_timestamp(start_sec),
+                "end_str": self.format_timestamp(end_sec)
+            })
+            full_text_list.append(text_clean)
+            last_added_text = text_clean
+
+        detected_lang = res.get("language", "ru")
+        dur = segments_data[-1]["end"] if segments_data else 0.0
+
+        return {
+            "status": "success",
+            "text": " ".join(full_text_list),
+            "segments": segments_data,
+            "language": detected_lang,
+            "duration": dur
+        }
+
+    # единая точка входа для транскрибации речи и музыки
     def transcribe(
         self,
         audio_path: str,
         language: Optional[str] = None,
         prompt: Optional[str] = None,
         is_music: bool = False,
-        model_name: Optional[str] = None
+        model_name: Optional[str] = None,
+        engine_type: str = "faster-whisper",
+        beam_size: int = 1,
+        task_id: Optional[str] = None
     ) -> Dict[str, Any]:
         clean_path = convert_to_wav(audio_path, target_sr=16000)
         target_model = model_name or self.model_size
-        model = self._load_model(target_model)
-        segments_data = []
-        full_text_list = []
+        total_duration = get_audio_duration(clean_path)
+
+        # ограничение параметра поиска по лучам в безопасных границах
+        clean_beam = max(1, min(5, int(beam_size)))
 
         try:
-            with silence_stderr():
-                transcribe_kwargs = {
-                    "beam_size": 5,
-                    "best_of": 5,
-                    "condition_on_previous_text": not is_music
-                }
-
-                if is_music:
-                    transcribe_kwargs.update({
-                        "no_speech_threshold": 0.8,
-                        "compression_ratio_threshold": 2.6,
-                        "temperature": (0.0, 0.2, 0.4, 0.6)
-                    })
-                else:
-                    transcribe_kwargs.update({
-                        "no_speech_threshold": 0.6,
-                        "compression_ratio_threshold": 2.4,
-                        "temperature": 0.0
-                    })
-
-                if language:
-                    transcribe_kwargs["language"] = language
-                if prompt and prompt.strip():
-                    transcribe_kwargs["initial_prompt"] = prompt.strip()
-
-                res = model.transcribe(clean_path, **transcribe_kwargs)
-
-            raw_segs = res.get("segments", [])
-            last_added_text = ""
-
-            for idx, s in enumerate(raw_segs, 1):
-                text_raw = s.get("text", "")
-                text_clean = self._clean_text(text_raw)
-                if not text_clean:
-                    continue
-
-                if text_clean.lower() == last_added_text.lower():
-                    continue
-
-                start_sec = round(float(s.get("start", 0)), 2)
-                end_sec = round(float(s.get("end", 0)), 2)
-
-                segments_data.append({
-                    "id": idx,
-                    "start": start_sec,
-                    "end": end_sec,
-                    "text": text_clean,
-                    "start_str": self.format_timestamp(start_sec),
-                    "end_str": self.format_timestamp(end_sec)
-                })
-                full_text_list.append(text_clean)
-                last_added_text = text_clean
-
-            detected_lang = res.get("language", "ru")
-            dur = segments_data[-1]["end"] if segments_data else 0.0
-
-            return {
-                "status": "success",
-                "text": " ".join(full_text_list),
-                "segments": segments_data,
-                "language": detected_lang,
-                "duration": dur
-            }
+            if engine_type == "openai-whisper":
+                log_info(f"Запуск распознавания openai-whisper ({target_model}, beam: {clean_beam})")
+                return self._transcribe_openai(
+                    clean_path=clean_path,
+                    target_model=target_model,
+                    beam_size=clean_beam,
+                    language=language,
+                    prompt=prompt,
+                    is_music=is_music
+                )
+            else:
+                log_info(f"Запуск распознавания faster-whisper ({target_model}, beam: {clean_beam})")
+                return self._transcribe_faster(
+                    clean_path=clean_path,
+                    target_model=target_model,
+                    beam_size=clean_beam,
+                    language=language,
+                    prompt=prompt,
+                    is_music=is_music,
+                    task_id=task_id,
+                    total_duration=total_duration
+                )
         except Exception as err:
+            log_error(f"Сбой при выполнении транскрибации: {err}")
             return {
                 "status": "error",
                 "text": "Не удалось извлечь речь из файла",
@@ -204,3 +373,4 @@ class WhisperEngine:
         if hours > 0:
             return f"{hours:02d}:{minutes:02d}:{secs:02d}"
         return f"{minutes:02d}:{secs:02d}"
+

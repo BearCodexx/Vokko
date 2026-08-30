@@ -317,38 +317,83 @@ def save_app_config(cfg: Dict[str, Any]):
     except Exception as e:
         log_error(f"Не удалось сохранить настройки: {str(e)}")
 
-# проверка наличия скачанного файла модели на диске
-def is_model_downloaded(model_id: str) -> bool:
+# соответствие моделей whisper их точным репозиториям на huggingface
+FASTER_WHISPER_REPOS: Dict[str, str] = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "large-v3": "Systran/faster-whisper-large-v3"
+}
+
+# проверка наличия скачанного файла модели на диске для выбранного движка
+def is_model_downloaded(model_id: str, engine: str = "faster-whisper") -> bool:
     if model_id in ["none", "custom-ollama", "openrouter"]:
         return True
 
     if model_id in WHISPER_MODELS:
-        m = WHISPER_MODELS[model_id]
-        fn = m["filename"]
-        target_in_local = MODELS_WHISPER_DIR / fn
-        user_cache = Path.home() / ".cache" / "whisper" / fn
-        return target_in_local.exists() or user_cache.exists()
+        if engine == "openai-whisper":
+            m = WHISPER_MODELS[model_id]
+            fn = m["filename"]
+            local_p = MODELS_WHISPER_DIR / fn
+            openai_p = MODELS_WHISPER_DIR / "openai" / fn
+            user_cache = Path.home() / ".cache" / "whisper" / fn
+            for candidate in [local_p, openai_p, user_cache]:
+                if candidate.exists() and candidate.is_file() and candidate.stat().st_size > 1024 * 1024:
+                    return True
+            return False
+        else:
+            # 1. проверка локальной папки models/whisper/faster/{model_id}
+            local_faster_dir = MODELS_WHISPER_DIR / "faster" / model_id
+            if local_faster_dir.exists():
+                bin_files = [f for f in local_faster_dir.glob("*") if f.name in ["model.bin", "model.safetensors"]]
+                if bin_files and bin_files[0].stat().st_size > 1024 * 1024:
+                    return True
+
+            # 2. точная проверка кэша huggingface hub по имени репозитория
+            repo = FASTER_WHISPER_REPOS.get(model_id)
+            if repo:
+                repo_folder_name = "models--" + repo.replace("/", "--")
+                hf_hub_repo = Path.home() / ".cache" / "huggingface" / "hub" / repo_folder_name
+                if hf_hub_repo.exists():
+                    for p in hf_hub_repo.glob("**/model.bin"):
+                        if p.is_file() and p.stat().st_size > 1024 * 1024:
+                            return True
+            return False
 
     if model_id in LLM_MODELS:
         m = LLM_MODELS[model_id]
         fn = m["filename"]
         if not fn:
             return True
-        return (MODELS_LLM_DIR / fn).exists()
+        p = MODELS_LLM_DIR / fn
+        return p.exists() and p.is_file() and p.stat().st_size > 1024 * 1024
 
     return False
 
 # получение абсолютного пути к файлу модели
-def get_model_path(model_id: str) -> Optional[Path]:
+def get_model_path(model_id: str, engine: str = "faster-whisper") -> Optional[Path]:
     if model_id in WHISPER_MODELS:
-        fn = WHISPER_MODELS[model_id]["filename"]
-        target_in_local = MODELS_WHISPER_DIR / fn
-        if target_in_local.exists():
-            return target_in_local
-        user_cache = Path.home() / ".cache" / "whisper" / fn
-        if user_cache.exists():
-            return user_cache
-        return target_in_local
+        if engine == "faster-whisper":
+            local_faster_dir = MODELS_WHISPER_DIR / "faster" / model_id
+            if local_faster_dir.exists():
+                return local_faster_dir
+            repo = FASTER_WHISPER_REPOS.get(model_id)
+            if repo:
+                repo_folder_name = "models--" + repo.replace("/", "--")
+                hf_hub_repo = Path.home() / ".cache" / "huggingface" / "hub" / repo_folder_name
+                if hf_hub_repo.exists():
+                    for p in hf_hub_repo.glob("**/model.bin"):
+                        if p.is_file() and p.stat().st_size > 1024 * 1024:
+                            return p.parent
+            return None
+        else:
+            fn = WHISPER_MODELS[model_id]["filename"]
+            for candidate in [MODELS_WHISPER_DIR / fn, MODELS_WHISPER_DIR / "openai" / fn, Path.home() / ".cache" / "whisper" / fn]:
+                if candidate.exists() and candidate.is_file() and candidate.stat().st_size > 1024 * 1024:
+                    return candidate
+            return MODELS_WHISPER_DIR / fn
 
     if model_id in LLM_MODELS:
         fn = LLM_MODELS[model_id]["filename"]
@@ -358,11 +403,11 @@ def get_model_path(model_id: str) -> Optional[Path]:
     return None
 
 # получение текущего прогресса загрузки
-def get_download_status(model_id: str) -> Dict[str, Any]:
+def get_download_status(model_id: str, engine: str = "faster-whisper") -> Dict[str, Any]:
     with _lock:
         if model_id in _download_progress:
             return _download_progress[model_id]
-        downloaded = is_model_downloaded(model_id)
+        downloaded = is_model_downloaded(model_id, engine=engine)
         return {
             "status": "ready" if downloaded else "not_downloaded",
             "percent": 100 if downloaded else 0,
@@ -370,7 +415,7 @@ def get_download_status(model_id: str) -> Dict[str, Any]:
         }
 
 # фоновая загрузка файла модели с обновлением прогресса
-def start_model_download(model_id: str):
+def start_model_download(model_id: str, engine: str = "faster-whisper"):
     with _lock:
         status = _download_progress.get(model_id, {}).get("status")
         if status == "downloading":
@@ -382,11 +427,34 @@ def start_model_download(model_id: str):
             "error": None
         }
 
-    thread = threading.Thread(target=_download_worker, args=(model_id,), daemon=True)
+    thread = threading.Thread(target=_download_worker, args=(model_id, engine), daemon=True)
     thread.start()
 
 # рабочий процесс скачивания файла по сети
-def _download_worker(model_id: str):
+def _download_worker(model_id: str, engine: str = "faster-whisper"):
+    if model_id in WHISPER_MODELS and engine == "faster-whisper":
+        target_dir = MODELS_WHISPER_DIR / "faster" / model_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_info(f"Загрузка модели faster-whisper {model_id} в {target_dir}")
+            with _lock:
+                _download_progress[model_id]["percent"] = 25
+
+            from faster_whisper.utils import download_model
+            hf_name = "deepdml/faster-whisper-large-v3-turbo-ct2" if model_id == "turbo" else model_id
+            download_model(hf_name, output_dir=str(target_dir))
+
+            with _lock:
+                _download_progress[model_id] = {"status": "ready", "percent": 100, "error": None}
+            log_info(f"Модель faster-whisper {model_id} успешно загружена и готова к работе")
+            return
+        except Exception as e:
+            err_msg = str(e)
+            log_error(f"Ошибка загрузки faster-whisper {model_id}: {err_msg}")
+            with _lock:
+                _download_progress[model_id] = {"status": "error", "percent": 0, "error": err_msg}
+            return
+
     meta = WHISPER_MODELS.get(model_id) or LLM_MODELS.get(model_id)
     if not meta or not meta.get("url"):
         with _lock:
@@ -437,13 +505,77 @@ def _download_worker(model_id: str):
         with _lock:
             _download_progress[model_id] = {"status": "error", "percent": 0, "error": err_msg}
 
+# синхронное скачивание файла модели для мастера настройки с отображением прогресса
+def download_model_file(model_id: str, engine: str = "faster-whisper", progress_callback: Optional[Callable[[int, int, float], None]] = None) -> bool:
+    if model_id in WHISPER_MODELS and engine == "faster-whisper":
+        target_dir = MODELS_WHISPER_DIR / "faster" / model_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_info(f"Загрузка модели faster-whisper {model_id} в {target_dir}")
+            from faster_whisper.utils import download_model
+            hf_name = "deepdml/faster-whisper-large-v3-turbo-ct2" if model_id == "turbo" else model_id
+            if progress_callback:
+                progress_callback(1024*1024*100, 1024*1024*500, 20.0)
+            download_model(hf_name, output_dir=str(target_dir))
+            if progress_callback:
+                progress_callback(1024*1024*500, 1024*1024*500, 100.0)
+            return True
+        except Exception as e:
+            log_error(f"Не удалось загрузить faster-whisper {model_id}: {e}")
+            return False
+
+    meta = WHISPER_MODELS.get(model_id) or LLM_MODELS.get(model_id)
+    if not meta or not meta.get("url"):
+        return False
+
+    url = meta["url"]
+    fn = meta["filename"]
+    target_dir = MODELS_WHISPER_DIR if meta["type"] == "asr" else MODELS_LLM_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_file = target_dir / fn
+    temp_file = target_dir / f"{fn}.part"
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req) as resp:
+            total_size = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            block_size = 1024 * 512
+
+            with open(temp_file, "wb") as f:
+                while True:
+                    chunk = resp.read(block_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0 and progress_callback:
+                        pct = (downloaded / total_size) * 100.0
+                        progress_callback(downloaded, total_size, pct)
+
+        if temp_file.exists():
+            if target_file.exists():
+                target_file.unlink()
+            temp_file.rename(target_file)
+            return True
+    except Exception as e:
+        if temp_file.exists():
+            temp_file.unlink(missing_ok=True)
+        log_error(f"Сбой загрузки {model_id}: {e}")
+        return False
+    return False
+
 # удаление скачанного файла модели с диска
 def delete_model_file(model_id: str) -> bool:
     path = get_model_path(model_id)
     if not path or not path.exists():
         return False
     try:
-        path.unlink()
+        if path.is_dir():
+            import shutil
+            shutil.rmtree(path)
+        else:
+            path.unlink()
         with _lock:
             if model_id in _download_progress:
                 del _download_progress[model_id]
@@ -454,12 +586,14 @@ def delete_model_file(model_id: str) -> bool:
         return False
 
 # получение полного каталога моделей со статусом загрузки
-def get_all_models_catalog() -> Dict[str, Any]:
+def get_all_models_catalog(engine: Optional[str] = None) -> Dict[str, Any]:
     cfg = load_app_config()
+    target_engine = engine or cfg.get("whisper_engine", "faster-whisper")
+
     asr_list = []
     for mid, m in WHISPER_MODELS.items():
         item = dict(m)
-        item["downloaded"] = is_model_downloaded(mid)
+        item["downloaded"] = is_model_downloaded(mid, engine=target_engine)
         asr_list.append(item)
 
     llm_list = []
@@ -469,6 +603,7 @@ def get_all_models_catalog() -> Dict[str, Any]:
         llm_list.append(item)
 
     return {
+        "active_engine": target_engine,
         "active_asr": cfg.get("active_asr_model", "turbo"),
         "active_llm": cfg.get("active_llm_model", "llama3.1-8b"),
         "ollama_url": cfg.get("ollama_url", "http://127.0.0.1:11434"),
@@ -479,5 +614,4 @@ def get_all_models_catalog() -> Dict[str, Any]:
         "llm_models": llm_list
     }
 
-download_model_file = start_model_download
 get_download_progress = get_download_status
