@@ -23,4 +23,5 @@ if __name__ == "__main__":
 
     log_info(f"Сервер запущен и доступен по адресу http://{HOST}:{PORT}")
     threading.Thread(target=open_browser, daemon=True).start()
-    uvicorn.run("backend.app.main:app", host=HOST, port=PORT, reload=False, log_level="critical")
+    uvicorn.run("backend.app.main:app", host=HOST, port=PORT, reload=False, log_level="critical", timeout_keep_alive=300)
+

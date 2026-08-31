@@ -1228,4 +1228,228 @@ input:checked + .slider:before {
   }
 }
 
+/* стили модального окна истории транскрипций */
+.history-nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 255, 170, 0.08);
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.history-nav-btn:hover {
+  background: rgba(0, 255, 170, 0.18);
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}
+
+.history-badge {
+  background: var(--neon-green);
+  color: #030a08;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.history-modal-box {
+  max-width: 860px;
+  width: 94%;
+}
+
+.history-modal-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 10px;
+}
+
+.history-import-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.btn-danger-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid rgba(255, 77, 77, 0.4);
+  color: #ff6b6b;
+  padding: 8px 14px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-danger-outline:hover {
+  background: rgba(255, 77, 77, 0.15);
+  border-color: #ff4d4d;
+  color: #fff;
+}
+
+.history-list-content {
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-family: 'Share Tech Mono', monospace;
+  border: 1px dashed var(--panel-border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.history-card {
+  background: rgba(0, 255, 170, 0.03);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.history-card:hover {
+  border-color: var(--neon-green);
+  background: rgba(0, 255, 170, 0.06);
+  box-shadow: 0 0 15px rgba(0, 255, 170, 0.1);
+}
+
+.history-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-mode-badge {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.history-mode-badge.mode-general {
+  background: rgba(0, 255, 170, 0.15);
+  color: var(--neon-green);
+  border: 1px solid rgba(0, 255, 170, 0.4);
+}
+
+.history-mode-badge.mode-music {
+  background: rgba(255, 0, 170, 0.15);
+  color: #ff00aa;
+  border: 1px solid rgba(255, 0, 170, 0.4);
+}
+
+.history-card-title {
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-card-meta {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.history-card-preview {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.history-action-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  color: var(--text-main);
+  padding: 5px 10px;
+  font-family: 'Rajdhani', sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.history-action-btn:hover {
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}
+
+.history-action-btn.btn-primary-action {
+  background: rgba(0, 255, 170, 0.15);
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}
+
+.history-action-btn.btn-primary-action:hover {
+  background: var(--neon-green);
+  color: #030a08;
+}
+
+.history-action-btn.btn-delete-action {
+  color: #ff6b6b;
+}
+
+.history-action-btn.btn-delete-action:hover {
+  border-color: #ff4d4d;
+  background: rgba(255, 77, 77, 0.2);
+  color: #fff;
+}
+
+
 

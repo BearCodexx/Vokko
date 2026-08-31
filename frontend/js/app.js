@@ -20,6 +20,7 @@ class VokkoApp {
     this.exporter = new FileExporter();
 
     this.initTheme();
+    this.initHistory();
     this.bindEvents();
     this.loadModelsCatalog();
   }
@@ -482,6 +483,29 @@ class VokkoApp {
       });
     });
 
+    // управление модальным окном истории
+    const histToggle = document.getElementById('history-toggle-btn');
+    if (histToggle) histToggle.addEventListener('click', () => this.openHistoryModal());
+
+    const histClose = document.getElementById('history-modal-close');
+    if (histClose) histClose.addEventListener('click', () => this.closeHistoryModal());
+
+    const histDone = document.getElementById('history-modal-done');
+    if (histDone) histDone.addEventListener('click', () => this.closeHistoryModal());
+
+    const histOverlay = document.getElementById('history-modal');
+    if (histOverlay) {
+      histOverlay.addEventListener('click', e => {
+        if (e.target === histOverlay) this.closeHistoryModal();
+      });
+    }
+
+    const histClearAll = document.getElementById('history-clear-all-btn');
+    if (histClearAll) histClearAll.addEventListener('click', () => this.clearAllHistory());
+
+    const histImportInput = document.getElementById('history-import-file');
+    if (histImportInput) histImportInput.addEventListener('change', e => this.handleHistoryImport(e));
+
     this.initModalActions();
   }
 
@@ -586,7 +610,6 @@ class VokkoApp {
     await this.syncCustomLlmSettings('general');
 
     this.showGeneralProgress();
-    this.startProgressPolling(taskId, 'general');
     this.isProcessing = true;
 
     try {
@@ -617,10 +640,14 @@ class VokkoApp {
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.detail || 'Ошибка при обработке дорожки');
+        throw new Error(errJson.detail || 'Ошибка при отправке дорожки на обработку');
       }
 
-      const result = await response.json();
+      const launchData = await response.json();
+      const actualTaskId = launchData.task_id || taskId;
+
+      // ожидание завершения фоновой задачи через периодический опрос состояния
+      const result = await this.waitForTaskCompletion(actualTaskId, 'general');
       this.segments = result.segments || [];
       this.duration = result.duration || 0;
       this.generalTitle = result.title || (this.selectedFile ? this.selectedFile.name.replace(/\.[^/.]+$/, '') : 'audio');
@@ -629,7 +656,6 @@ class VokkoApp {
     } catch (err) {
       this.showError('general', err.message || 'Сбой при транскрибации');
     } finally {
-      this.stopProgressPolling();
       this.hideGeneralProgress();
       this.isProcessing = false;
     }
@@ -639,7 +665,7 @@ class VokkoApp {
   async startMusicTranscription() {
     if (this.isProcessing) return;
     if (!this.selectedFile) {
-      this.showError('music', 'Пожалуйста, перетащите или выберите аудиофайл песни (MP3, WAV, FLAC, M4A)');
+      this.showError('music', 'Пожалуйста, перетащите или выберите аудиофайл песни, MP3, WAV, FLAC, M4A');
       return;
     }
 
@@ -652,7 +678,6 @@ class VokkoApp {
     await this.syncCustomLlmSettings('music');
 
     this.showMusicProgress();
-    this.startProgressPolling(taskId, 'music');
     this.isProcessing = true;
 
     try {
@@ -670,10 +695,14 @@ class VokkoApp {
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.detail || 'Ошибка при извлечении вокала');
+        throw new Error(errJson.detail || 'Ошибка при отправке трека на обработку');
       }
 
-      const result = await response.json();
+      const launchData = await response.json();
+      const actualTaskId = launchData.task_id || taskId;
+
+      // ожидание завершения музыкальной обработки через периодический опрос
+      const result = await this.waitForTaskCompletion(actualTaskId, 'music');
       this.musicBlocks = result.blocks || [];
       this.musicTitle = result.title || (this.selectedFile ? this.selectedFile.name.replace(/\.[^/.]+$/, '') : 'song');
       this.musicArtist = result.artist || '';
@@ -683,28 +712,66 @@ class VokkoApp {
     } catch (err) {
       this.showError('music', err.message || 'Сбой при обработке музыки');
     } finally {
-      this.stopProgressPolling();
       this.hideMusicProgress();
       this.isProcessing = false;
     }
   }
 
-  // периодический опрос этапов выполнения
-  startProgressPolling(taskId, mode) {
-    this.stopProgressPolling();
-    this.progressPollInterval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/progress/${taskId}`);
-        if (!res.ok) return;
-        const data = await res.json();
+  // периодический опрос этапов выполнения с устойчивостью к сетевым задержкам
+  waitForTaskCompletion(taskId, mode) {
+    return new Promise((resolve, reject) => {
+      let failedConsecutiveCount = 0;
+      let lastProgressTime = Date.now();
 
-        if (mode === 'general') {
-          this.updateGeneralStep(data.stage, data.total_stages);
-        } else {
-          this.updateMusicStep(data.stage, data.total_stages);
+      const poll = async () => {
+        try {
+          const res = await fetch(`/api/progress/${taskId}?_t=${Date.now()}`);
+          if (!res.ok) {
+            failedConsecutiveCount++;
+            if (failedConsecutiveCount > 30) {
+              this.stopProgressPolling();
+              reject(new Error('Потеряна связь с сервером при обработке задачи'));
+              return;
+            }
+            return;
+          }
+
+          failedConsecutiveCount = 0;
+          lastProgressTime = Date.now();
+          const data = await res.json();
+
+          if (mode === 'general') {
+            this.updateGeneralStep(data.stage || 1, data.total_stages || 4);
+          } else {
+            this.updateMusicStep(data.stage || 1, data.total_stages || 4);
+          }
+
+          if (data.status === 'completed' && data.result) {
+            this.stopProgressPolling();
+            resolve(data.result);
+            return;
+          }
+
+          if (data.status === 'error') {
+            this.stopProgressPolling();
+            reject(new Error(data.error || data.message || 'Ошибка выполнения задачи'));
+            return;
+          }
+        } catch (e) {
+          failedConsecutiveCount++;
+          // устойчивость к кратковременным разрывам связи до 30 секунд
+          if (failedConsecutiveCount > 30 && (Date.now() - lastProgressTime > 30000)) {
+            this.stopProgressPolling();
+            reject(new Error('Сетевой сбой при опросе состояния задачи'));
+            return;
+          }
         }
-      } catch (e) {}
-    }, 500);
+      };
+
+      this.stopProgressPolling();
+      this.progressPollInterval = setInterval(poll, 600);
+      poll();
+    });
   }
 
   stopProgressPolling() {
@@ -802,6 +869,7 @@ class VokkoApp {
     }
 
     this.speakerManager.renderSegments(this.segments, container);
+    this.refreshHistoryBadge();
     container.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -809,6 +877,7 @@ class VokkoApp {
     document.getElementById('music-result-panel').style.display = 'block';
     const container = document.getElementById('music-lyrics-container');
     this.lyricManager.renderBlocks(this.musicBlocks, container);
+    this.refreshHistoryBadge();
     container.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -879,16 +948,20 @@ class VokkoApp {
     const cancelBtn = document.getElementById('modal-cancel-btn');
     const confirmBtn = document.getElementById('modal-confirm-btn');
 
-    cancelBtn.addEventListener('click', () => {
-      modal.classList.remove('active');
-    });
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
+        if (modal) modal.classList.remove('active');
+      });
+    }
 
-    confirmBtn.addEventListener('click', () => {
-      if (this.currentModalCallback) {
-        this.currentModalCallback();
-      }
-      modal.classList.remove('active');
-    });
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        if (this.currentModalCallback) {
+          this.currentModalCallback();
+        }
+        if (modal) modal.classList.remove('active');
+      });
+    }
   }
 
   openRenameModal(speakerName) {
@@ -939,6 +1012,240 @@ class VokkoApp {
     };
 
     modal.classList.add('active');
+  }
+
+  // инициализация модуля истории
+  initHistory() {
+    this.refreshHistoryBadge();
+  }
+
+  // обновление счетчика сохраненных транскрипций в шапке
+  async refreshHistoryBadge() {
+    try {
+      const resp = await fetch('/api/history');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const count = (data.history || []).length;
+      const badge = document.getElementById('history-badge');
+      if (badge) {
+        badge.innerText = count;
+      }
+    } catch (e) {
+      console.error('Не удалось обновить счетчик истории', e);
+    }
+  }
+
+  // открытие модального окна истории
+  openHistoryModal() {
+    const modal = document.getElementById('history-modal');
+    if (modal) {
+      modal.classList.add('active');
+      modal.style.display = 'flex';
+      this.loadHistoryList();
+    }
+  }
+
+  // закрытие модального окна истории
+  closeHistoryModal() {
+    const modal = document.getElementById('history-modal');
+    if (modal) {
+      modal.classList.remove('active');
+      modal.style.display = 'none';
+    }
+  }
+
+  // загрузка и рендеринг списка последних транскрипций
+  async loadHistoryList() {
+    const container = document.getElementById('history-list-container');
+    if (!container) return;
+    container.innerHTML = `
+      <div style="text-align:center;padding:30px;font-family:'Share Tech Mono';color:var(--neon-green);">
+        ЗАГРУЗКА ИСТОРИИ...
+      </div>
+    `;
+
+    try {
+      const resp = await fetch('/api/history');
+      if (!resp.ok) throw new Error('Сбой загрузки истории');
+      const data = await resp.json();
+      const items = data.history || [];
+      this.refreshHistoryBadge();
+
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="history-empty-state">
+            <svg class="sci-icon" viewBox="0 0 24 24" style="width:36px;height:36px;margin-bottom:12px;stroke:var(--text-muted);"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <div>НЕТ СОХРАНЕННЫХ ТРАНСКРИПЦИЙ</div>
+            <div style="font-size:11px;margin-top:6px;color:var(--text-muted);">
+              Транскрипции сохраняются автоматически при завершении (до 10 последних)
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = '';
+      items.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'history-card';
+        const isMusic = item.mode === 'music';
+        const modeLabel = isMusic ? 'МУЗЫКА' : 'РЕЧЬ';
+        const modeClass = isMusic ? 'mode-music' : 'mode-general';
+        const durMin = Math.floor((item.duration || 0) / 60);
+        const durSec = Math.floor((item.duration || 0) % 60).toString().padStart(2, '0');
+        const durStr = `${durMin}:${durSec}`;
+
+        card.innerHTML = `
+          <div class="history-card-header">
+            <div class="history-card-title-row">
+              <span class="history-mode-badge ${modeClass}">${modeLabel}</span>
+              <span class="history-card-title" title="${item.title}">${item.title}</span>
+            </div>
+            <div class="history-card-meta">
+              <span>${durStr}</span>
+              <span>${item.segments_count || 0} сегм.</span>
+              <span>${item.created_at || ''}</span>
+            </div>
+          </div>
+          ${item.preview_text ? `<div class="history-card-preview">${item.preview_text}</div>` : ''}
+          <div class="history-card-actions">
+            <button class="history-action-btn btn-primary-action" onclick="window.app.openHistoryItem('${item.id}')">
+              <svg class="sci-icon" viewBox="0 0 24 24" style="width:13px;height:13px;"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+              ОТКРЫТЬ
+            </button>
+            <button class="history-action-btn" onclick="window.app.exportHistoryItemJson('${item.id}')">
+              <svg class="sci-icon" viewBox="0 0 24 24" style="width:13px;height:13px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              СКАЧАТЬ JSON
+            </button>
+            <button class="history-action-btn btn-delete-action" onclick="window.app.deleteHistoryItem('${item.id}')">
+              <svg class="sci-icon" viewBox="0 0 24 24" style="width:13px;height:13px;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              УДАЛИТЬ
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    } catch (e) {
+      container.innerHTML = `
+        <div style="color:#ff6b6b;padding:20px;text-align:center;font-family:'Share Tech Mono';">
+          Ошибка при загрузке истории
+        </div>
+      `;
+    }
+  }
+
+  // открытие выбранной транскрипции из истории в рабочей области
+  async openHistoryItem(itemId) {
+    try {
+      const resp = await fetch(`/api/history/${itemId}`);
+      if (!resp.ok) throw new Error('Не удалось загрузить данные транскрипции');
+      const data = await resp.json();
+      const item = data.item;
+      if (!item) return;
+
+      this.closeHistoryModal();
+
+      if (item.mode === 'music') {
+        this.switchMode('music');
+        this.musicBlocks = item.blocks || [];
+        this.musicTitle = item.title || 'song';
+        this.musicArtist = item.artist || '';
+        this.duration = item.duration || 0;
+        this.renderMusicResults(item);
+      } else {
+        this.switchMode('general');
+        this.segments = item.segments || [];
+        this.generalTitle = item.title || 'audio';
+        this.duration = item.duration || 0;
+        const hasDiarization = item.metadata?.has_speakers ?? (this.segments.some(s => s.speaker));
+        this.renderGeneralResults(item, hasDiarization);
+      }
+    } catch (e) {
+      this.showError(this.currentMode, e.message || 'Ошибка открытия транскрипции');
+    }
+  }
+
+  // скачивание полной структуры транскрипции в формате JSON
+  async exportHistoryItemJson(itemId) {
+    try {
+      const resp = await fetch(`/api/history/${itemId}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const item = data.item;
+      if (!item) return;
+
+      const blob = new Blob([JSON.stringify(item, null, 2)], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${this.cleanFileName(item.title || 'transcript')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Ошибка экспорта JSON', e);
+    }
+  }
+
+  // удаление отдельной транскрипции
+  async deleteHistoryItem(itemId) {
+    try {
+      const resp = await fetch(`/api/history/${itemId}`, { method: 'DELETE' });
+      if (!resp.ok) return;
+      await this.loadHistoryList();
+    } catch (e) {
+      console.error('Ошибка удаления записи истории', e);
+    }
+  }
+
+  // полная очистка всей истории
+  async clearAllHistory() {
+    if (!confirm('Вы действительно хотите удалить все сохраненные транскрипции?')) {
+      return;
+    }
+    try {
+      const resp = await fetch('/api/history', { method: 'DELETE' });
+      if (!resp.ok) return;
+      await this.loadHistoryList();
+    } catch (e) {
+      console.error('Ошибка очистки истории', e);
+    }
+  }
+
+  // импорт транскрипции из внешнего JSON файла
+  async handleHistoryImport(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+
+      const resp = await fetch('/api/history/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(parsed)
+      });
+
+      if (!resp.ok) {
+        const errJson = await resp.json().catch(() => ({}));
+        throw new Error(errJson.detail || 'Не удалось импортировать файл');
+      }
+
+      const res = await resp.json();
+      const savedItem = res.item;
+      e.target.value = '';
+
+      if (savedItem && savedItem.id) {
+        await this.openHistoryItem(savedItem.id);
+      } else {
+        await this.loadHistoryList();
+      }
+    } catch (err) {
+      alert(`Ошибка импорта JSON: ${err.message}`);
+      e.target.value = '';
+    }
   }
 }
 

@@ -10,6 +10,8 @@ temp_storage/exports/*
 *.log
 data/*.log
 data/*.json
+data/history/*
+!data/history/.gitkeep
 !data/.gitkeep
 debug_*.txt
 *cookies.txt

@@ -11,9 +11,14 @@ from pydantic import BaseModel
 
 from backend.app.core.config import UPLOAD_DIR, PROCESSED_DIR, EXPORTS_DIR
 from backend.app.core.downloader import MediaDownloader
-from backend.app.core.audio_utils import convert_to_wav
 from backend.app.core.logger import log_info, log_stage, log_warning, log_error
-from backend.app.core.progress import set_task_progress, get_task_progress, clear_task_progress
+from backend.app.core.progress import (
+    set_task_progress,
+    set_task_completed,
+    set_task_failed,
+    get_task_progress,
+    clear_task_progress
+)
 from backend.app.core.models_manager import (
     get_all_models_catalog,
     download_model_file,
@@ -27,6 +32,7 @@ from backend.app.services.diarization_engine import DiarizationEngine
 from backend.app.services.lyric_analyzer import LyricAnalyzer
 from backend.app.services.llm_engine import LLMEngine
 from backend.app.services.export_engine import ExportEngine
+from backend.app.services.history_engine import HistoryEngine
 
 router = APIRouter()
 
@@ -37,6 +43,7 @@ diarizer = DiarizationEngine()
 lyric_srv = LyricAnalyzer()
 llm_srv = LLMEngine()
 exporter = ExportEngine()
+history_srv = HistoryEngine()
 
 class SpeakerActionPayload(BaseModel):
     action: str
@@ -89,7 +96,6 @@ def _cleanup_task_files(task_id: str):
             shutil.rmtree(demucs_dir, ignore_errors=True)
     except Exception:
         pass
-    clear_task_progress(task_id)
 
 # функция удаления сформированного файла экспорта после передачи
 def _cleanup_export_file(file_path: str):
@@ -174,7 +180,196 @@ async def get_ollama_models_list():
 
 from backend.app.core.audio_utils import convert_to_wav, get_audio_duration
 
-# обработка видео и звукозаписи в отдельном рабочем потоке
+# рабочий поток фоновой обработки речи и видео
+def _worker_general_transcribe(
+    task_id: str,
+    file_path: Optional[str],
+    url: Optional[str],
+    enable_timecodes: bool,
+    enable_diarization: bool,
+    num_speakers: Optional[int],
+    target_asr: str,
+    target_llm: str,
+    llm_layers: int,
+    batch_minutes: float,
+    whisper_engine_type: str,
+    beam_size: int,
+    initial_title: str,
+    total_stages: int
+):
+    current_stage = 1
+    audio_path = None
+    title = initial_title
+    duration = 0.0
+    try:
+        if file_path and os.path.exists(file_path):
+            audio_path = convert_to_wav(file_path)
+        elif url and url.strip():
+            log_info(f"Скачивание звукового потока по ссылке: {url.strip()}")
+            dl_res = downloader.download_url(url.strip())
+            audio_path = dl_res["file_path"]
+            title = dl_res.get("title", title)
+            duration = dl_res.get("duration", 0.0)
+            log_info(f"Поток успешно загружен: {title}")
+        else:
+            raise RuntimeError("Не найден аудиофайл для обработки")
+
+        current_stage += 1
+        set_task_progress(task_id, current_stage, total_stages, f"Распознавание речи Whisper ({target_asr})")
+        log_stage(current_stage, total_stages, f"Распознавание речи Whisper ({target_asr}, движок: {whisper_engine_type}, beam: {beam_size})")
+
+        whisper_res = whisper_srv.transcribe(
+            audio_path,
+            is_music=False,
+            model_name=target_asr,
+            engine_type=whisper_engine_type,
+            beam_size=beam_size,
+            task_id=task_id
+        )
+        if whisper_res.get("status") == "error":
+            raise RuntimeError(whisper_res.get("error", "Ошибка транскрибации"))
+
+        segments = whisper_res.get("segments", [])
+        log_info(f"Распознано сегментов: {len(segments)}, язык: {whisper_res.get('language', 'ru')}")
+
+        if enable_diarization and len(segments) > 0:
+            current_stage += 1
+            set_task_progress(task_id, current_stage, total_stages, "Разделение спикеров")
+            log_stage(current_stage, total_stages, "Разделение спикеров")
+            segments = diarizer.diarize(audio_path, segments, num_speakers=num_speakers)
+
+        if target_llm != "none":
+            current_stage += 1
+            set_task_progress(task_id, current_stage, total_stages, f"Коррекция текста ({target_llm})")
+            log_stage(current_stage, total_stages, f"Коррекция текста моделью ({target_llm})")
+            segments = llm_srv.correct_general_text(target_llm, segments, layers=llm_layers, batch_minutes=batch_minutes)
+
+        if not enable_timecodes:
+            for s in segments:
+                s.pop("start_str", None)
+                s.pop("end_str", None)
+
+        dur_val = duration or whisper_res.get("duration", 0.0)
+
+        # автоматическое сохранение в историю последних записей
+        saved_rec = history_srv.save_history_item({
+            "title": title,
+            "mode": "general",
+            "duration": dur_val,
+            "segments": segments,
+            "metadata": {
+                "language": whisper_res.get("language", "ru"),
+                "has_speakers": enable_diarization
+            }
+        })
+
+        result_payload = {
+            "status": "success",
+            "task_id": task_id,
+            "history_id": saved_rec.get("id"),
+            "title": title,
+            "duration": dur_val,
+            "language": whisper_res.get("language", "ru"),
+            "full_text": whisper_res.get("text", ""),
+            "segments": segments,
+            "has_speakers": enable_diarization
+        }
+        set_task_completed(task_id, result_payload)
+        log_info(f"Задача транскрибации речи {task_id} успешно завершена")
+    except Exception as err:
+        log_error(f"Сбой выполнения задачи {task_id}: {err}")
+        set_task_failed(task_id, str(err))
+    finally:
+        _cleanup_task_files(task_id)
+
+# рабочий поток фоновой обработки музыки и вокала
+def _worker_music_transcribe(
+    task_id: str,
+    file_path: Optional[str],
+    url: Optional[str],
+    target_asr: str,
+    target_llm: str,
+    llm_layers: int,
+    initial_title: str
+):
+    audio_path = None
+    title = initial_title
+    artist = ""
+    duration = 0.0
+    try:
+        if file_path and os.path.exists(file_path):
+            audio_path = convert_to_wav(file_path)
+        elif url and url.strip():
+            log_info(f"Загрузка музыкального трека по адресу: {url.strip()}")
+            dl_res = downloader.download_url(url.strip())
+            audio_path = dl_res["file_path"]
+            title = dl_res.get("title", title)
+            artist = dl_res.get("artist", "")
+            duration = dl_res.get("duration", 0.0)
+            log_info(f"Трек загружен: {artist} - {title}")
+        else:
+            raise RuntimeError("Не найден аудиофайл песни")
+
+        actual_duration = duration or get_audio_duration(audio_path)
+        if actual_duration > 480.0:
+            raise RuntimeError("Длительность трека для музыкального режима ограничена 8 минутами, 480 сек")
+
+        set_task_progress(task_id, 2, 4, "Разделение вокала и музыки (Demucs)")
+        log_stage(2, 4, "Разделение вокала и музыки (Demucs)")
+        vocal_audio_path = demucs_srv.isolate_vocals(audio_path, task_id)
+
+        set_task_progress(task_id, 3, 4, "Распознавание текста песни (Whisper)")
+        log_stage(3, 4, f"Распознавание текста песни (Whisper {target_asr})")
+        lyric_prompt = f"Песня {title} {artist}".strip()
+        whisper_res = whisper_srv.transcribe(vocal_audio_path, prompt=lyric_prompt, is_music=True, model_name=target_asr)
+        if whisper_res.get("status") == "error":
+            raise RuntimeError(whisper_res.get("error", "Ошибка транскрибации вокала"))
+
+        segments = whisper_res.get("segments", [])
+
+        set_task_progress(task_id, 4, 4, "Разметка куплетов и припевов (LLM)")
+        log_stage(4, 4, f"Разметка куплетов и припевов ({target_llm})")
+        blocks = lyric_srv.analyze_structure(segments)
+
+        if target_llm != "none":
+            blocks = llm_srv.correct_song_lyrics(target_llm, segments, blocks, song_title=title, song_artist=artist, layers=llm_layers)
+
+        dur_val = duration or whisper_res.get("duration", 0.0)
+
+        # автоматическое сохранение в историю последних записей
+        saved_rec = history_srv.save_history_item({
+            "title": title,
+            "artist": artist,
+            "mode": "music",
+            "duration": dur_val,
+            "blocks": blocks,
+            "segments": segments,
+            "metadata": {
+                "language": whisper_res.get("language", "ru")
+            }
+        })
+
+        result_payload = {
+            "status": "success",
+            "task_id": task_id,
+            "history_id": saved_rec.get("id"),
+            "title": title,
+            "artist": artist,
+            "duration": dur_val,
+            "language": whisper_res.get("language", "ru"),
+            "blocks": blocks,
+            "segments": segments,
+            "full_text": whisper_res.get("text", "")
+        }
+        set_task_completed(task_id, result_payload)
+        log_info(f"Задача транскрибации музыки {task_id} успешно завершена")
+    except Exception as err:
+        log_error(f"Сбой выполнения музыкальной задачи {task_id}: {err}")
+        set_task_failed(task_id, str(err))
+    finally:
+        _cleanup_task_files(task_id)
+
+# асинхронный запуск транскрибации видео и звукозаписи
 @router.post("/transcribe/general")
 def transcribe_general(
     file: Optional[UploadFile] = File(None),
@@ -191,94 +386,54 @@ def transcribe_general(
     beam_size: int = Form(1)
 ):
     current_task_id = task_id or str(uuid.uuid4())[:8]
-    audio_path = None
     title = "Аудиозапись"
-    duration = 0.0
+    saved_file_path = None
 
     cfg = load_app_config()
     target_asr = asr_model or cfg.get("active_asr_model", "large-v3")
     target_llm = llm_model or cfg.get("active_llm_model", "none")
     total_stages = 2 + (1 if enable_diarization else 0) + (1 if target_llm != "none" else 0)
-    current_stage = 1
 
-    try:
-        set_task_progress(current_task_id, current_stage, total_stages, "Загрузка аудио")
-        log_stage(current_stage, total_stages, "Загрузка аудио")
-        if file and file.filename:
-            title = Path(file.filename).stem
-            ext = Path(file.filename).suffix or ".mp3"
-            log_info(f"Загрузка локального файла: {file.filename}")
-            saved_file = UPLOAD_DIR / f"{current_task_id}{ext}"
-            with open(saved_file, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            audio_path = convert_to_wav(str(saved_file))
-        elif url and url.strip():
-            log_info(f"Скачивание звукового потока по ссылке: {url.strip()}")
-            dl_res = downloader.download_url(url.strip())
-            audio_path = dl_res["file_path"]
-            title = dl_res.get("title", title)
-            duration = dl_res.get("duration", 0.0)
-            log_info(f"Поток успешно загружен: {title}")
-        else:
-            raise HTTPException(status_code=400, detail="Необходимо предоставить файл или интернет адрес")
+    set_task_progress(current_task_id, 1, total_stages, "Загрузка аудио")
+    log_stage(1, total_stages, "Загрузка аудио")
 
-        # распознавание речи выбранным движком и моделью
-        current_stage += 1
-        set_task_progress(current_task_id, current_stage, total_stages, f"Распознавание речи Whisper ({target_asr})")
-        log_stage(current_stage, total_stages, f"Распознавание речи Whisper ({target_asr}, движок: {whisper_engine_type}, beam: {beam_size})")
-        whisper_res = whisper_srv.transcribe(
-            audio_path,
-            is_music=False,
-            model_name=target_asr,
-            engine_type=whisper_engine_type,
-            beam_size=beam_size,
-            task_id=current_task_id
-        )
-        if whisper_res.get("status") == "error":
-            raise HTTPException(status_code=500, detail=whisper_res.get("error", "Ошибка транскрибации"))
+    if file and file.filename:
+        title = Path(file.filename).stem
+        ext = Path(file.filename).suffix or ".mp3"
+        log_info(f"Загрузка локального файла: {file.filename}")
+        saved_file = UPLOAD_DIR / f"{current_task_id}{ext}"
+        with open(saved_file, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        saved_file_path = str(saved_file)
+    elif url and url.strip():
+        url = url.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Необходимо предоставить файл или интернет адрес")
 
-        segments = whisper_res.get("segments", [])
-        log_info(f"Распознано сегментов: {len(segments)}, язык: {whisper_res.get('language', 'ru')}")
+    threading.Thread(
+        target=_worker_general_transcribe,
+        args=(
+            current_task_id,
+            saved_file_path,
+            url,
+            enable_timecodes,
+            enable_diarization,
+            num_speakers,
+            target_asr,
+            target_llm,
+            llm_layers,
+            batch_minutes,
+            whisper_engine_type,
+            beam_size,
+            title,
+            total_stages
+        ),
+        daemon=True
+    ).start()
 
-        # выделение спикеров ДО нейрокоррекции для передачи контекста диалога
-        if enable_diarization and len(segments) > 0:
-            current_stage += 1
-            set_task_progress(current_task_id, current_stage, total_stages, "Разделение спикеров")
-            log_stage(current_stage, total_stages, "Разделение спикеров")
-            segments = diarizer.diarize(audio_path, segments, num_speakers=num_speakers)
+    return JSONResponse(content={"status": "started", "task_id": current_task_id})
 
-        # нейрокоррекция пунктуации и грамматики с учетом определенных спикеров
-        if target_llm != "none":
-            current_stage += 1
-            set_task_progress(current_task_id, current_stage, total_stages, f"Коррекция текста ({target_llm})")
-            log_stage(current_stage, total_stages, f"Коррекция текста моделью ({target_llm})")
-            segments = llm_srv.correct_general_text(target_llm, segments, layers=llm_layers, batch_minutes=batch_minutes)
-
-        if not enable_timecodes:
-            for s in segments:
-                s.pop("start_str", None)
-                s.pop("end_str", None)
-
-        return {
-            "status": "success",
-            "task_id": current_task_id,
-            "title": title,
-            "duration": duration or whisper_res.get("duration", 0.0),
-            "language": whisper_res.get("language", "ru"),
-            "full_text": whisper_res.get("text", ""),
-            "segments": segments,
-            "has_speakers": enable_diarization
-        }
-    except HTTPException as http_err:
-        log_error(f"Ошибка запроса: {http_err.detail}")
-        raise
-    except Exception as err:
-        log_error(f"Сбой при обработке: {str(err)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка обработки, {str(err)}")
-    finally:
-        _cleanup_task_files(current_task_id)
-
-# транскрибация музыкального трека в отдельном рабочем потоке
+# асинхронный запуск транскрибации музыкального трека
 @router.post("/transcribe/music")
 def transcribe_music(
     file: Optional[UploadFile] = File(None),
@@ -289,91 +444,44 @@ def transcribe_music(
     llm_layers: int = Form(1)
 ):
     current_task_id = task_id or str(uuid.uuid4())[:8]
-    audio_path = None
     title = "Музыкальная дорожка"
-    artist = ""
-    duration = 0.0
+    saved_file_path = None
 
     cfg = load_app_config()
     target_asr = asr_model or cfg.get("active_asr_model", "large-v3")
     target_llm = llm_model or cfg.get("active_llm_model", "none")
 
-    try:
-        set_task_progress(current_task_id, 1, 4, "Загрузка аудио")
-        log_stage(1, 4, "Загрузка аудио")
-        if file and file.filename:
-            title = Path(file.filename).stem
-            ext = Path(file.filename).suffix or ".mp3"
-            log_info(f"Загрузка музыкального файла: {file.filename}")
-            saved_file = UPLOAD_DIR / f"{current_task_id}{ext}"
-            with open(saved_file, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-            audio_path = convert_to_wav(str(saved_file))
-        elif url and url.strip():
-            log_info(f"Загрузка музыкального трека по адресу: {url.strip()}")
-            dl_res = downloader.download_url(url.strip())
-            audio_path = dl_res["file_path"]
-            title = dl_res.get("title", title)
-            artist = dl_res.get("artist", "")
-            duration = dl_res.get("duration", 0.0)
-            log_info(f"Трек загружен: {artist} - {title}")
-        else:
-            raise HTTPException(status_code=400, detail="Необходимо предоставить файл или ссылку на песню")
+    set_task_progress(current_task_id, 1, 4, "Загрузка аудио")
+    log_stage(1, 4, "Загрузка аудио")
 
-        # проверка ограничения длительности трека для музыкального режима
-        actual_duration = duration or get_audio_duration(audio_path)
-        if actual_duration > 480.0:
-            log_error(f"Длительность трека ({actual_duration:.1f} сек) превышает 8 минут")
-            raise HTTPException(
-                status_code=400,
-                detail="Длительность трека для музыкального режима ограничена 8 минутами (480 сек)"
-            )
+    if file and file.filename:
+        title = Path(file.filename).stem
+        ext = Path(file.filename).suffix or ".mp3"
+        log_info(f"Загрузка музыкального файла: {file.filename}")
+        saved_file = UPLOAD_DIR / f"{current_task_id}{ext}"
+        with open(saved_file, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        saved_file_path = str(saved_file)
+    elif url and url.strip():
+        url = url.strip()
+    else:
+        raise HTTPException(status_code=400, detail="Необходимо предоставить файл или ссылку на песню")
 
-        # изоляция вокала через выделение дорожек
-        set_task_progress(current_task_id, 2, 4, "Разделение вокала и музыки (Demucs)")
-        log_stage(2, 4, "Разделение вокала и музыки (Demucs)")
-        vocal_audio_path = demucs_srv.isolate_vocals(audio_path, current_task_id)
+    threading.Thread(
+        target=_worker_music_transcribe,
+        args=(
+            current_task_id,
+            saved_file_path,
+            url,
+            target_asr,
+            target_llm,
+            llm_layers,
+            title
+        ),
+        daemon=True
+    ).start()
 
-        # распознавание текста песни выбранной моделью
-        set_task_progress(current_task_id, 3, 4, f"Распознавание текста песни (Whisper)")
-        log_stage(3, 4, f"Распознавание текста песни (Whisper {target_asr})")
-        lyric_prompt = f"Песня {title} {artist}".strip()
-        whisper_res = whisper_srv.transcribe(vocal_audio_path, prompt=lyric_prompt, is_music=True, model_name=target_asr)
-        if whisper_res.get("status") == "error":
-            raise HTTPException(status_code=500, detail=whisper_res.get("error", "Ошибка транскрибации вокала"))
-
-        segments = whisper_res.get("segments", [])
-
-        # интеллектуальный анализ куплетов и припевов
-        set_task_progress(current_task_id, 4, 4, "Разметка куплетов и припевов (LLM)")
-        log_stage(4, 4, f"Разметка куплетов и припевов ({target_llm})")
-        blocks = lyric_srv.analyze_structure(segments)
-
-        # опциональная нейрокоррекция и выравнивание строф через LLM
-        if target_llm != "none":
-            blocks = llm_srv.correct_song_lyrics(target_llm, segments, blocks, song_title=title, song_artist=artist, layers=llm_layers)
-
-        log_info(f"Сформировано смысловых блоков песни: {len(blocks)}")
-
-        return {
-            "status": "success",
-            "task_id": current_task_id,
-            "title": title,
-            "artist": artist,
-            "duration": duration or whisper_res.get("duration", 0.0),
-            "language": whisper_res.get("language", "ru"),
-            "blocks": blocks,
-            "segments": segments,
-            "full_text": whisper_res.get("text", "")
-        }
-    except HTTPException as http_err:
-        log_error(f"Ошибка обработки: {http_err.detail}")
-        raise
-    except Exception as err:
-        log_error(f"Сбой при обработке песни: {str(err)}")
-        raise HTTPException(status_code=500, detail=f"Ошибка обработки песни, {str(err)}")
-    finally:
-        _cleanup_task_files(current_task_id)
+    return JSONResponse(content={"status": "started", "task_id": current_task_id})
 
 # переименование, слияние и удаление спикеров
 @router.post("/speakers/action")
@@ -443,3 +551,50 @@ async def export_transcript(payload: ExportPayload):
     except Exception as err:
         log_error(f"Сбой экспорта: {str(err)}")
         raise HTTPException(status_code=500, detail=f"Ошибка экспорта: {str(err)}")
+
+# получение списка последних десяти транскрипций
+@router.get("/history")
+async def get_history_list():
+    return JSONResponse(content={"status": "success", "history": history_srv.list_history()})
+
+# получение полных данных выбранной транскрипции из истории
+@router.get("/history/{item_id}")
+async def get_history_entry(item_id: str):
+    data = history_srv.get_history_item(item_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Запись истории не найдена")
+    return JSONResponse(content={"status": "success", "item": data})
+
+# удаление конкретной записи истории
+@router.delete("/history/{item_id}")
+async def delete_history_entry(item_id: str):
+    success = history_srv.delete_history_item(item_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Не удалось удалить запись истории")
+    return JSONResponse(content={"status": "success", "deleted_id": item_id})
+
+# полная очистка истории
+@router.delete("/history")
+async def clear_all_history():
+    history_srv.clear_history()
+    return JSONResponse(content={"status": "success"})
+
+# импорт файла транскрипции в историю
+@router.post("/history/import")
+async def import_history_entry(payload: Dict[str, Any] = Body(...)):
+    try:
+        saved_item = history_srv.import_history_item(payload)
+        return JSONResponse(content={"status": "success", "item": saved_item})
+    except Exception as e:
+        log_error(f"Сбой импорта транскрипции: {e}")
+        raise HTTPException(status_code=400, detail=f"Ошибка импорта, {str(e)}")
+
+# сохранение или обновление транскрипции в истории
+@router.post("/history/save")
+async def save_history_entry(payload: Dict[str, Any] = Body(...)):
+    try:
+        saved_item = history_srv.save_history_item(payload)
+        return JSONResponse(content={"status": "success", "item": saved_item})
+    except Exception as e:
+        log_error(f"Сбой сохранения в историю: {e}")
+        raise HTTPException(status_code=400, detail=f"Ошибка сохранения, {str(e)}")

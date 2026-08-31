@@ -22,13 +22,14 @@ UPLOAD_DIR = BASE_DIR / "temp_storage" / "uploads"
 PROCESSED_DIR = BASE_DIR / "temp_storage" / "processed"
 EXPORTS_DIR = BASE_DIR / "temp_storage" / "exports"
 DATA_DIR = BASE_DIR / "data"
+HISTORY_DIR = DATA_DIR / "history"
 MODELS_DIR = BASE_DIR / "models"
 MODELS_LLM_DIR = MODELS_DIR / "llm"
 MODELS_WHISPER_DIR = MODELS_DIR / "whisper"
 CONFIG_FILE = DATA_DIR / "config.json"
 WIZARD_STATE_FILE = DATA_DIR / "wizard_state.json"
 
-for d in [UPLOAD_DIR, PROCESSED_DIR, EXPORTS_DIR, DATA_DIR, MODELS_DIR, MODELS_LLM_DIR, MODELS_WHISPER_DIR]:
+for d in [UPLOAD_DIR, PROCESSED_DIR, EXPORTS_DIR, DATA_DIR, HISTORY_DIR, MODELS_DIR, MODELS_LLM_DIR, MODELS_WHISPER_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 # поиск свободного сетевого порта, исключение конфликтов
