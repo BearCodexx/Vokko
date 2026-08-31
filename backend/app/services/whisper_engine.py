@@ -183,7 +183,10 @@ class WhisperEngine:
             vad_filter=not is_music,
             initial_prompt=prompt if prompt else None,
             language=language if language else None,
-            temperature=0.0 if not is_music else (0.0, 0.2, 0.4)
+            temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0] if not is_music else (0.0, 0.2, 0.4),
+            condition_on_previous_text=False,
+            repetition_penalty=1.1,
+            no_repeat_ngram_size=3
         )
 
         detected_lang = info.language or "ru"
