@@ -270,6 +270,27 @@
             </label>
           </div>
 
+          <!-- блок выбора количества спикеров (появляется только при включенной диаризации) -->
+          <div id="general-speakers-config-box" class="settings-row" style="margin-top: 10px; display: flex;">
+            <div class="model-select-group" style="flex: 1; min-width: 220px;">
+              <label class="model-select-label">
+                <svg class="sci-icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                Количество спикеров:
+              </label>
+              <div class="select-wrapper">
+                <select id="general-num-speakers" class="sci-select">
+                  <option value="auto" selected>Авто</option>
+                  <option value="1">1 спикер</option>
+                  <option value="2">2 спикера</option>
+                  <option value="3">3 спикера</option>
+                  <option value="4">4 спикера</option>
+                  <option value="5">5 спикеров</option>
+                  <option value="6">6+ спикеров</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
           <!-- блок расширенных параметров LLM (OpenRouter / Ollama) -->
           <div id="general-llm-advanced-panel" class="llm-advanced-row" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid rgba(0,229,255,0.15);">
             <!-- блок OpenRouter -->

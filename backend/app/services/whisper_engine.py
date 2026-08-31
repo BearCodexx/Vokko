@@ -186,42 +186,70 @@ class WhisperEngine:
             temperature=[0.0, 0.2, 0.4, 0.6, 0.8, 1.0] if not is_music else (0.0, 0.2, 0.4),
             condition_on_previous_text=False,
             repetition_penalty=1.1,
-            no_repeat_ngram_size=3
+            no_repeat_ngram_size=3,
+            word_timestamps=True
         )
 
         detected_lang = info.language or "ru"
         last_added_text = ""
+        seg_idx = 1
 
-        for idx, s in enumerate(segments_gen, 1):
-            text_clean = self._clean_text(s.text or "")
-            if not text_clean:
-                continue
+        for raw_s in segments_gen:
+            words = getattr(raw_s, "words", None)
+            # если есть пословные таймкоды, нарезаем реплики по естественным паузам (>0.45с) для чистой диаризации
+            sub_segments = []
+            if words and len(words) > 0:
+                cur_words = []
+                cur_start = None
+                for w_idx, w in enumerate(words):
+                    if cur_start is None:
+                        cur_start = float(w.start)
+                    cur_words.append(w.word)
+                    is_last = (w_idx == len(words) - 1)
+                    has_pause = False
+                    if not is_last:
+                        next_w = words[w_idx + 1]
+                        gap = float(next_w.start) - float(w.end)
+                        cur_dur = float(w.end) - cur_start
+                        # разделяем реплики только при настоящей паузе
+                        if gap >= 0.55 or (cur_dur >= 7.5 and gap >= 0.35):
+                            has_pause = True
+                    if (is_last or has_pause) and cur_words:
+                        sub_text = self._clean_text(" ".join(cur_words))
+                        if sub_text:
+                            sub_segments.append((round(cur_start, 2), round(float(w.end), 2), sub_text))
+                        cur_words = []
+                        cur_start = None
+            else:
+                raw_text = self._clean_text(raw_s.text or "")
+                if raw_text:
+                    sub_segments.append((round(float(raw_s.start), 2), round(float(raw_s.end), 2), raw_text))
 
-            if text_clean.lower() == last_added_text.lower():
-                continue
+            for start_sec, end_sec, text_clean in sub_segments:
+                if text_clean.lower() == last_added_text.lower():
+                    continue
 
-            start_sec = round(float(s.start), 2)
-            end_sec = round(float(s.end), 2)
-
-            segments_data.append({
-                "id": idx,
-                "start": start_sec,
-                "end": end_sec,
-                "text": text_clean,
-                "start_str": self.format_timestamp(start_sec),
-                "end_str": self.format_timestamp(end_sec)
-            })
-            full_text_list.append(text_clean)
-            last_added_text = text_clean
+                segments_data.append({
+                    "id": seg_idx,
+                    "start": start_sec,
+                    "end": end_sec,
+                    "text": text_clean,
+                    "start_str": self.format_timestamp(start_sec),
+                    "end_str": self.format_timestamp(end_sec)
+                })
+                full_text_list.append(text_clean)
+                last_added_text = text_clean
+                seg_idx += 1
 
             # динамический вывод прогресса в одну строку консоли и обновление статуса
+            raw_end = round(float(raw_s.end), 2)
             now = time.time()
-            if now - last_log_time >= 0.5 or idx == 1 or idx % 5 == 0:
+            if now - last_log_time >= 0.5 or seg_idx % 5 == 0:
                 last_log_time = now
-                _render_live_transcribe_bar(end_sec, total_duration, len(segments_data), is_final=False)
+                _render_live_transcribe_bar(raw_end, total_duration, len(segments_data), is_final=False)
                 if task_id:
-                    pct = min(99, int((end_sec / max(1.0, total_duration)) * 100)) if total_duration > 0 else 0
-                    time_curr = self.format_timestamp(start_sec)
+                    pct = min(99, int((raw_end / max(1.0, total_duration)) * 100)) if total_duration > 0 else 0
+                    time_curr = self.format_timestamp(round(float(raw_s.start), 2))
                     time_total = self.format_timestamp(total_duration) if total_duration > 0 else "..."
                     set_task_progress(task_id, 2, 3, f"Распознавание речи Whisper: {pct}% ({time_curr} / {time_total})")
 
@@ -255,7 +283,8 @@ class WhisperEngine:
             transcribe_kwargs = {
                 "beam_size": beam_size,
                 "best_of": beam_size,
-                "condition_on_previous_text": False
+                "condition_on_previous_text": False,
+                "word_timestamps": True
             }
             if is_music:
                 transcribe_kwargs.update({
@@ -279,28 +308,56 @@ class WhisperEngine:
 
         raw_segs = res.get("segments", [])
         last_added_text = ""
+        seg_idx = 1
 
-        for idx, s in enumerate(raw_segs, 1):
-            text_clean = self._clean_text(s.get("text", ""))
-            if not text_clean:
-                continue
+        for raw_s in raw_segs:
+            words = raw_s.get("words", [])
+            sub_segments = []
+            if words and len(words) > 0:
+                cur_words = []
+                cur_start = None
+                for w_idx, w in enumerate(words):
+                    w_start = float(w.get("start", 0.0))
+                    w_end = float(w.get("end", 0.0))
+                    w_word = str(w.get("word", "")).strip()
+                    if cur_start is None:
+                        cur_start = w_start
+                    cur_words.append(w_word)
+                    is_last = (w_idx == len(words) - 1)
+                    has_pause = False
+                    if not is_last:
+                        next_w = words[w_idx + 1]
+                        next_start = float(next_w.get("start", 0.0))
+                        gap = next_start - w_end
+                        cur_dur = w_end - cur_start
+                        if gap >= 0.55 or (cur_dur >= 7.5 and gap >= 0.35):
+                            has_pause = True
+                    if (is_last or has_pause) and cur_words:
+                        sub_text = self._clean_text(" ".join(cur_words))
+                        if sub_text:
+                            sub_segments.append((round(cur_start, 2), round(w_end, 2), sub_text))
+                        cur_words = []
+                        cur_start = None
+            else:
+                raw_text = self._clean_text(raw_s.get("text", ""))
+                if raw_text:
+                    sub_segments.append((round(float(raw_s.get("start", 0)), 2), round(float(raw_s.get("end", 0)), 2), raw_text))
 
-            if text_clean.lower() == last_added_text.lower():
-                continue
+            for start_sec, end_sec, text_clean in sub_segments:
+                if text_clean.lower() == last_added_text.lower():
+                    continue
 
-            start_sec = round(float(s.get("start", 0)), 2)
-            end_sec = round(float(s.get("end", 0)), 2)
-
-            segments_data.append({
-                "id": idx,
-                "start": start_sec,
-                "end": end_sec,
-                "text": text_clean,
-                "start_str": self.format_timestamp(start_sec),
-                "end_str": self.format_timestamp(end_sec)
-            })
-            full_text_list.append(text_clean)
-            last_added_text = text_clean
+                segments_data.append({
+                    "id": seg_idx,
+                    "start": start_sec,
+                    "end": end_sec,
+                    "text": text_clean,
+                    "start_str": self.format_timestamp(start_sec),
+                    "end_str": self.format_timestamp(end_sec)
+                })
+                full_text_list.append(text_clean)
+                last_added_text = text_clean
+                seg_idx += 1
 
         detected_lang = res.get("language", "ru")
         dur = segments_data[-1]["end"] if segments_data else 0.0

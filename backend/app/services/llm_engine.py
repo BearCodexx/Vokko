@@ -470,10 +470,8 @@ class LLMEngine:
             def _process_subgroup(sub_segs):
                 lines_payload = []
                 for idx, s in enumerate(sub_segs, 1):
-                    spk = s.get("speaker")
-                    spk_tag = f"{spk}: " if spk else ""
                     txt = s.get("text", "").strip()
-                    lines_payload.append(f"[{idx}] {spk_tag}{txt}")
+                    lines_payload.append(f"[{idx}] {txt}")
 
                 prompt_text = "\n".join(lines_payload)
                 if not prompt_text.strip():
@@ -482,7 +480,7 @@ class LLMEngine:
                 ans = None
                 # Пользователь просил 1 повтор при неудаче (то есть всего 2 попытки)
                 for _attempt in range(2):
-                    ans = self.generate(model_id, prompt_text, system_prompt, temperature=0.20, timeout=batch_dur_sec)
+                    ans = self.generate(model_id, prompt_text, system_prompt, temperature=0.15, timeout=batch_dur_sec)
                     if ans:
                         break
                     time.sleep(2)
@@ -492,7 +490,12 @@ class LLMEngine:
 
                 # фильтрация отказов безопасности и служебных отписок
                 ans_lower = ans.lower()
-                if "cannot create" in ans_lower or "i am sorry" in ans_lower or "i apologize" in ans_lower or "as an ai" in ans_lower:
+                refusal_markers = [
+                    "cannot create", "i am sorry", "i apologize", "as an ai", "language model",
+                    "не могу выполнять", "не могу выполнить", "не могу обработать", "не могу отвечать",
+                    "извините", "извиняюсь", "как языковая модель", "как искусственный интеллект"
+                ]
+                if any(m in ans_lower for m in refusal_markers) and len(ans_lower) < 200:
                     return
 
                 # двусторонняя защита от нежелательного перевода между языками
@@ -514,23 +517,29 @@ class LLMEngine:
                 ans_lines = [l.strip() for l in ans.splitlines() if l.strip()]
                 line_map = {}
                 for l in ans_lines:
-                    m = re.match(r'^\s*\[?(\d+)\]?[\.\:\)]?\s*(?:[^:]+:\s*)?(.*)$', l)
+                    l_low = l.lower()
+                    if any(ref in l_low for ref in ["не могу выполнять", "не могу выполнить", "извините", "извиняюсь", "as an ai", "i cannot"]):
+                        continue
+
+                    # строгое сопоставление по номеру строки
+                    m = re.match(r'^\s*\[?(\d+)\]?[\.\:\)]?\s*(?:(?:Спикер|Speaker)\s*\d+[\:\.\-]?\s*)?(.*)$', l, re.IGNORECASE)
                     if m:
                         try:
                             num = int(m.group(1))
                             clean_body = m.group(2).strip()
+                            clean_body = re.sub(r'^(?:Спикер|Speaker)\s*\d+[\:\.\-]?\s*', '', clean_body, flags=re.IGNORECASE).strip()
                             if clean_body:
                                 line_map[num] = clean_body
                         except Exception:
                             pass
 
+                # сопоставляем только строго по номеру
                 for idx, s in enumerate(sub_segs, 1):
                     if idx in line_map:
-                        s["text"] = line_map[idx]
-                    elif idx - 1 < len(ans_lines):
-                        fallback_text = re.sub(r'^\s*\[?\d+\]?[\.\:\)]?\s*(?:[^:]+:\s*)?', '', ans_lines[idx - 1]).strip()
-                        if fallback_text and len(fallback_text) > 1:
-                            s["text"] = fallback_text
+                        mapped_text = line_map[idx]
+                        orig_len = len(s.get("text", ""))
+                        if orig_len == 0 or (0.25 <= len(mapped_text) / max(1, orig_len) <= 3.5):
+                            s["text"] = mapped_text
 
             # обработка батча порциями по 45 сегментов для быстрой генерации без таймаутов
             chunk_size = 45

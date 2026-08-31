@@ -445,6 +445,17 @@ class VokkoApp {
       });
     }
 
+    // видимость настройки количества спикеров в зависимости от тумблера
+    const diarToggle = document.getElementById('toggle-diarization');
+    const spkConfigBox = document.getElementById('general-speakers-config-box');
+    if (diarToggle && spkConfigBox) {
+      const updateSpkVisibility = () => {
+        spkConfigBox.style.display = diarToggle.checked ? 'flex' : 'none';
+      };
+      diarToggle.addEventListener('change', updateSpkVisibility);
+      updateSpkVisibility();
+    }
+
     // запуск обработки
     document.getElementById('btn-start-general').addEventListener('click', () => this.startGeneralTranscription());
     document.getElementById('btn-start-music').addEventListener('click', () => this.startMusicTranscription());
@@ -588,6 +599,10 @@ class VokkoApp {
       formData.append('task_id', taskId);
       formData.append('enable_timecodes', timecodes);
       formData.append('enable_diarization', diarization);
+      const numSpeakersVal = document.getElementById('general-num-speakers')?.value || 'auto';
+      if (diarization && numSpeakersVal !== 'auto') {
+        formData.append('num_speakers', parseInt(numSpeakersVal, 10));
+      }
       formData.append('asr_model', asrModel);
       formData.append('llm_model', llmModel);
       formData.append('llm_layers', llmLayers);
