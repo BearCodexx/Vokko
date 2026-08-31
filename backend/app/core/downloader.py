@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import yt_dlp
 import backend.app.core.doh
-from backend.app.core.config import UPLOAD_DIR
+from backend.app.core.config import BASE_DIR, DATA_DIR, UPLOAD_DIR
 from backend.app.core.audio_utils import convert_to_wav
 from backend.app.core.logger import log_info, log_error
 
@@ -20,14 +20,22 @@ class MediaDownloader:
     # поиск файла cookies.txt для доступа к закрытым или 18+ видео
     def _find_cookie_file(self) -> Optional[str]:
         candidates = [
-            Path("cookies.txt"),
-            Path("data/cookies.txt"),
-            Path("temp_storage/cookies.txt"),
-            Path("models/cookies.txt")
+            BASE_DIR / "cookies.txt",
+            DATA_DIR / "cookies.txt",
+            Path("cookies.txt").resolve(),
+            Path("data/cookies.txt").resolve(),
+            Path("temp_storage/cookies.txt").resolve()
         ]
         for c in candidates:
             if c.exists() and c.is_file() and c.stat().st_size > 0:
-                return str(c.resolve())
+                # защитная копия во временный каталог, чтобы yt-dlp не стирал токены авторизации из оригинала
+                temp_cookie = self.output_dir / "session_cookies.txt"
+                try:
+                    shutil.copy2(c, temp_cookie)
+                    log_info(f"Загружены куки авторизации из {c.name}")
+                    return str(temp_cookie)
+                except Exception:
+                    return str(c.resolve())
         return None
 
     # подготовка параметров загрузки, обход проверок ботов
