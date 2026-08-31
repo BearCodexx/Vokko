@@ -255,7 +255,7 @@ class WhisperEngine:
             transcribe_kwargs = {
                 "beam_size": beam_size,
                 "best_of": beam_size,
-                "condition_on_previous_text": not is_music
+                "condition_on_previous_text": False
             }
             if is_music:
                 transcribe_kwargs.update({
@@ -267,7 +267,7 @@ class WhisperEngine:
                 transcribe_kwargs.update({
                     "no_speech_threshold": 0.6,
                     "compression_ratio_threshold": 2.4,
-                    "temperature": 0.0
+                    "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
                 })
 
             if language:
